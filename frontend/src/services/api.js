@@ -31,8 +31,7 @@ export const wsnApi = {
   getTopology:     ()       => api.get('/api/nodes/topology'),
 
   // Trust
-  getTrust:        ()       => api.get('/api/trust'),
-  evaluateTrust:   (uid)    => api.post(`/api/trust/${uid}/evaluate`),
+  getTrust:        ()       => api.get('/api/attacks/trust'),
 
   // Attacks / detection
   getAttacks:      (params) => api.get('/api/attacks', { params }),
@@ -50,10 +49,11 @@ export const wsnApi = {
   // Simulation
   startSim:        (data)   => api.post('/api/sim/start', data),
   injectAttack:    (data)   => api.post('/api/sim/attack', data),
+  getSnapshot:     ()       => api.get('/api/sim/snapshot'),
   getMetrics:      ()       => api.get('/api/metrics'),
 
   // Dashboard
-  getDashboard:    ()       => api.get('/api/dashboard'),
+  getDashboard:    ()       => api.get('/api/sim/dashboard'),
 };
 
 export default api;

@@ -1,47 +1,55 @@
 from fastapi import APIRouter, HTTPException
-from ..sim.state import get_sim, reset_sim
-from ..schemas.schemas import SimRequest, AttackInject, DashboardOut, MetricsOut
+from ..sim.state import get_runner, reset_runner
+from ..schemas.schemas import SimRequest, AttackInject, DashboardOut, MetricsOut, SnapshotOut
 
 router = APIRouter(prefix="/api/sim", tags=["Simulation"])
 
 
 @router.post("/start")
-def start(req: SimRequest):
-    sim = reset_sim(req.n_nodes, req.n_malicious, req.seed)
+async def start(req: SimRequest):
+    runner = reset_runner(req.n_nodes, req.n_malicious, req.seed)
     all_detections = []
     for _ in range(max(1, req.rounds)):
-        all_detections.extend(sim.evaluate_trust())
+        all_detections.extend(runner.step())
+    await runner.broadcast()
     return {
-        "nodes": sim.topology(),
+        "nodes": runner.sim.topology(),
         "detections": all_detections,
-        "metrics": sim.metrics(),
-        "block_height": sim.chain.head.index,
+        "metrics": runner.sim.metrics(),
+        "block_height": runner.sim.chain.head.index,
     }
 
 
 @router.post("/step")
-def step():
+async def step():
     """Run one trust-evaluation round (event-driven block if anything fires)."""
-    sim = get_sim()
-    detections = sim.evaluate_trust()
-    return {"detections": detections, "metrics": sim.metrics(),
-            "block_height": sim.chain.head.index, "chain_valid": sim.chain.is_valid()}
+    runner = get_runner()
+    detections = runner.step()
+    await runner.broadcast()
+    return {"detections": detections, "metrics": runner.sim.metrics(),
+            "block_height": runner.sim.chain.head.index, "chain_valid": runner.sim.chain.is_valid()}
 
 
 @router.post("/attack")
-def inject(body: AttackInject):
-    sim = get_sim()
-    n = sim.nodes.get(body.node_uid)
+async def inject(body: AttackInject):
+    runner = get_runner()
+    n = runner.sim.nodes.get(body.node_uid)
     if not n:
         raise HTTPException(404, "node not found")
-    n.malicious = True
-    n.attack = body.attack_type
-    return {"node_uid": n.uid, "attack": n.attack, "malicious": True}
+    runner.inject(body.node_uid, body.attack_type)
+    await runner.broadcast()
+    return {"node_uid": n.uid, "attack": n.attack, "malicious": True, "trust": n.trust}
+
+
+@router.get("/snapshot", response_model=SnapshotOut)
+def snapshot():
+    return get_runner().snapshot()
 
 
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard():
-    sim = get_sim()
+    runner = get_runner()
+    sim = runner.sim
     nodes = list(sim.nodes.values())
     return DashboardOut(
         total_nodes=len(nodes),

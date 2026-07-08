@@ -9,6 +9,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -39,6 +40,7 @@ class Block:
     merkle: str = ""
     timestamp: float = field(default_factory=time.time)
     hash: str = ""
+    event_count: int = 0
 
     def compute_hash(self) -> str:
         body = json.dumps({
@@ -85,6 +87,7 @@ class Blockchain:
             trigger_type=trigger_type,
             validator_uid=validator_uid,
             difficulty=self.difficulty,
+            event_count=len(events),
         )
         blk.mine()
         self.chain.append(blk)
@@ -107,5 +110,6 @@ class Blockchain:
             d["block_hash"] = d.pop("hash")
             d["prev_hash"] = d["prev_hash"]
             d["merkle_root"] = d.pop("merkle")
+            d["mined_at"] = datetime.fromtimestamp(b.timestamp, tz=timezone.utc).isoformat()
             out.append(d)
         return out

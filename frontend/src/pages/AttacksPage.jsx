@@ -16,8 +16,8 @@ import { useSim } from '../sim/SimContext';
 import { PageHeader, StatCard, LiveDot, ATTACK_COLORS, SEVERITY_COLORS, STATUS_COLORS } from '../utils/ui';
 import { ACCENT, DANGER, WARN, ACCENT2 } from '../context/ThemeContext';
 
-const ATTACK_TYPES = ['All', 'Blackhole', 'Sybil', 'Wormhole'];
-const SEVERITIES   = ['All', 'Critical', 'High', 'Low'];
+const ATTACK_TYPES = ['All', 'Blackhole', 'Sybil', 'Wormhole', 'Grayhole'];
+const SEVERITIES   = ['All', 'Critical', 'High', 'Medium', 'Low'];
 const STATUSES     = ['All', 'Detected', 'Isolated'];
 
 export default function AttacksPage() {

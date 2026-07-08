@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from ..sim.state import get_sim
+from ..sim.state import get_sim, get_runner
 
 router = APIRouter(prefix="/api/nodes", tags=["Nodes"])
 
@@ -16,22 +16,22 @@ def topology():
 
 
 @router.post("/{uid}/isolate")
-def isolate(uid: str):
-    sim = get_sim()
-    n = sim.nodes.get(uid)
+async def isolate(uid: str):
+    runner = get_runner()
+    n = runner.sim.nodes.get(uid)
     if not n:
         raise HTTPException(404, "node not found")
-    n.isolated = True
-    n.trust = 0.1
+    runner.isolate(uid)
+    await runner.broadcast()
     return {"node_uid": uid, "isolated": True, "trust": n.trust}
 
 
 @router.post("/{uid}/restore")
-def restore(uid: str):
-    sim = get_sim()
-    n = sim.nodes.get(uid)
+async def restore(uid: str):
+    runner = get_runner()
+    n = runner.sim.nodes.get(uid)
     if not n:
         raise HTTPException(404, "node not found")
-    n.isolated = False
-    n.trust = 0.8
+    runner.restore(uid)
+    await runner.broadcast()
     return {"node_uid": uid, "isolated": False, "trust": n.trust}

@@ -1,0 +1,332 @@
+========================================================================
+ TrustChain-WSN (bc-routing) — PROJECT FLOW & ALGORITHMS (Full Guide)
+========================================================================
+
+Project title: Event-Driven Lightweight Blockchain-Based Secure Routing
+for Industrial Wireless Sensor Networks (TrustChain-WSN)
+
+In one line: This project simulates a Wireless Sensor Network (WSN)
+where sensor nodes forward data to a central "Sink" node. Some nodes
+are malicious and launch attacks. A Trust Engine detects misbehaving
+nodes, a Trust-Aware AODV routing algorithm reroutes traffic around
+them, and every detection is permanently sealed into a lightweight
+blockchain — all computed live on a real backend server and streamed
+to the browser in real time.
+
+------------------------------------------------------------------------
+1) ARCHITECTURE — WHO DOES WHAT
+------------------------------------------------------------------------
+
+The project is now FULLY BACKEND-DRIVEN. The Python FastAPI backend is
+the single authoritative simulation engine; the React frontend is a
+thin live client that displays whatever the backend computes.
+
+  bc-routing/
+  ├── backend/                  FastAPI (Python) — THE BRAIN of the project
+  │   └── app/
+  │       ├── sim/
+  │       │   ├── network.py       WSNSimulator — trust engine + AODV routing
+  │       │   ├── blockchain.py    Real SHA-256 blockchain (Proof-of-Work)
+  │       │   ├── live_runner.py   Ticking engine — runs the simulation loop
+  │       │   │                    continuously, every 2 seconds, forever,
+  │       │   │                    the moment the server starts
+  │       │   └── state.py         Single shared simulation instance
+  │       ├── routes/
+  │       │   ├── ws.py            WebSocket endpoint — pushes live updates
+  │       │   ├── nodes.py, attacks.py, ledger.py, routes_api.py, sim.py
+  │       │                        REST endpoints (for Postman/curl/testing)
+  │       └── main.py              Starts the simulation loop on server boot
+  │
+  ├── frontend/                 React 18 + Vite + MUI — THE DISPLAY
+  │   └── src/
+  │       ├── sim/
+  │       │   ├── wsClient.js      Connects to the backend over WebSocket,
+  │       │   │                    auto-reconnects if the connection drops
+  │       │   └── SimContext.jsx   Shares the live backend data with every
+  │       │                        page in the app (via useSim() hook)
+  │       └── pages/               12 pages — Dashboard, Network Map, Trust
+  │                                 Engine, Attack Lab, Blockchain Ledger,
+  │                                 Secure Routing, Performance, etc.
+  │
+  └── supabase/                 Only used for user login/signup — has
+                                 NOTHING to do with the live simulation
+
+KEY POINT: The backend does not wait for a browser to connect. The
+moment you run the backend server (`uvicorn`), it starts ticking the
+simulation forward on its own, forever, in the background — exactly
+like a real industrial monitoring system would. When a browser opens
+the frontend, it connects over a WebSocket and simply starts receiving
+the live state the backend has already been computing.
+
+If two browser tabs are open at once, both see the exact same live
+data at the exact same time, because both are just watching the same
+one backend simulation — there is only ONE source of truth.
+
+------------------------------------------------------------------------
+2) HOW DATA FLOWS — STEP BY STEP
+------------------------------------------------------------------------
+
+STEP 1: Backend starts (`uvicorn app.main:app`)
+        → A WSNSimulator is created: 24 nodes, some malicious, placed
+          on a random field, with a random attack pattern.
+        → A background loop starts immediately: every 2 seconds, it
+          runs one full "tick" of the simulation (see Section 3).
+        → This keeps running whether or not anyone is watching.
+
+STEP 2: Frontend opens (browser loads the React app)
+        → After login, the app opens a WebSocket connection to
+          `ws://<backend>/ws/sim`.
+        → The backend immediately sends the current state (a
+          "snapshot") so the page has data to show instantly — no
+          waiting for the next tick.
+        → From then on, every time the backend finishes a tick, it
+          pushes a fresh snapshot to every connected browser tab.
+
+STEP 3: User interacts (clicks "Inject Attack", "Isolate Node", etc.)
+        → The frontend sends an "action" message over the same
+          WebSocket, e.g. {"action": "inject", "args": ["N-005",
+          "Blackhole"]}.
+        → The backend applies the action immediately to its one shared
+          simulation state, then instantly re-broadcasts the updated
+          snapshot to ALL connected tabs — not just the one that sent
+          the action.
+        → This is why the reaction feels instant instead of "wait for
+          the next 2-second tick."
+
+STEP 4: Pages render
+        → Every page (Dashboard, Network Map, Trust Engine, etc.) just
+          reads from the same shared `useSim()` data. Nothing is
+          computed on the frontend — it is purely a live display of
+          whatever the backend has decided.
+
+------------------------------------------------------------------------
+3) WHAT HAPPENS DURING ONE "TICK" (ONE SIMULATION ROUND)
+------------------------------------------------------------------------
+
+Every 2 seconds, the backend's LiveSimRunner (backend/app/sim/
+live_runner.py) performs, in order:
+
+  1. (Optional) Auto-attack: if "Auto-attack mode" is on, there is a
+     28% chance a random clean node is turned malicious this round —
+     keeps the network from ever going idle.
+  2. Trust evaluation: every node simulates forwarding a batch of
+     packets. Malicious nodes drop packets according to their attack
+     type. Trust scores are penalized for drops, delay anomalies, and
+     identity anomalies.
+  3. Detection: if any node's trust score crosses below the isolation
+     threshold (0.40), a detection event fires and the node is
+     isolated (removed from routing).
+  4. Blockchain sealing: if ANY detections happened this round, exactly
+     ONE new block is mined and added to the chain, containing all of
+     that round's detections. If nothing happened, NO block is made —
+     this is the "event-driven, lightweight" part of the design.
+  5. Route rebuilding: the Trust-Aware AODV routing algorithm
+     recalculates paths from sensor nodes to the sink, automatically
+     avoiding any newly isolated nodes.
+  6. History snapshot: the current PDR, delay, throughput, energy, and
+     trust values are appended to rolling history buffers (last 40
+     points) so the charts on the Dashboard/Trust/Metrics pages have
+     data to plot.
+  7. Broadcast: the full updated state is pushed to every connected
+     browser tab.
+
+------------------------------------------------------------------------
+4) ALGORITHMS — WHAT EACH ONE DOES AND WHERE IT LIVES
+------------------------------------------------------------------------
+
+--- A) TRUST ENGINE (Attack Detection) ---
+Location: backend/app/sim/network.py → evaluate_trust()
+
+Every node has a Trust Score between 0 and 1. Each round:
+  - Malicious nodes drop a fixed percentage of packets depending on
+    their attack type:
+        Blackhole  → drops ~95% of packets (most severe)
+        Grayhole   → drops ~50% of packets (selective, harder to spot)
+        Wormhole   → drops ~30% but causes abnormal delay
+        Sybil      → drops ~20% but fakes multiple identities
+  - Trust score is reduced based on: packet drop ratio, delay anomaly,
+    and identity anomaly (Sybil only).
+  - Honest nodes slowly regain trust each round.
+  - When a node's trust falls below 0.40, it is marked ISOLATED and
+    excluded from all future routing decisions.
+
+Analogy: like a credit score — every dropped "payment" (packet) hurts
+your score, and once it's too low, you lose privileges (routing).
+
+--- B) TRUST-AWARE AODV ROUTING (Secure Path Selection) ---
+Location: backend/app/sim/network.py → discover_route()
+
+AODV (Ad-hoc On-Demand Distance Vector) is a well-known WSN/MANET
+routing protocol. This project extends it with trust awareness:
+  - To route a packet from any sensor node to the Sink, the algorithm
+    picks the next hop that minimizes: distance-to-sink ÷ trust-score.
+  - Isolated or low-trust nodes are removed from the candidate list
+    entirely — they cannot be selected as a hop, no matter how close
+    they are geographically.
+  - If a route had to avoid a bad node, it is flagged "reconfigured"
+    with a human-readable reason (shown on the Secure Routing page).
+
+Analogy: like GPS navigation that avoids not just traffic jams, but
+roads it doesn't trust — even if they're the shortest path.
+
+--- C) EVENT-DRIVEN LIGHTWEIGHT BLOCKCHAIN (Core Novelty) ---
+Location: backend/app/sim/blockchain.py
+
+Unlike normal blockchains that mine a new block on a fixed timer
+(wasting energy even when nothing is happening), this chain only
+seals a new block when the Trust Engine actually detects something.
+No detections this round → no new block. This keeps computational and
+communication overhead low, which matters for real, battery-powered
+sensor networks.
+
+Each block contains:
+  - index, previous block's hash (chains blocks together)
+  - a Merkle root — a single hash summarizing all detection events in
+    the block, so tampering with any one event breaks the hash
+  - nonce, difficulty, timestamp, validator, trigger type
+  - the actual detection records (node, attack type, trust before/
+    after, confidence, mitigation action taken)
+
+Mining uses real Proof-of-Work: SHA-256 hashing, incrementing a nonce
+until the resulting hash starts with the required number of leading
+zeros (difficulty = 2, deliberately low so it stays lightweight).
+
+Chain integrity check: walking the chain and confirming every block's
+"previous hash" actually matches the prior block's real hash. If
+anyone tampered with an old block, this check fails immediately — this
+is what the Blockchain Ledger page's "Chain Verified / Chain Broken"
+indicator shows live.
+
+Analogy: like a tamper-evident logbook where every new page is sealed
+with a fingerprint of the previous page — change any old page, and
+every fingerprint after it stops matching.
+
+--- D) NETWORK METRICS ---
+Location: backend/app/sim/network.py → metrics()
+
+Computed every tick:
+  - PDR (Packet Delivery Ratio) = forwarded ÷ (forwarded + dropped) × 100
+  - Average delay, throughput, average energy remaining
+  - Number of alive/active/isolated nodes
+  - Overhead — deliberately kept low, rising only slightly with
+    detection activity, to visually prove the event-driven blockchain
+    design keeps overhead down compared to continuous-blockchain designs
+
+--- E) NETWORK/FIELD GENERATION ---
+Location: backend/app/sim/network.py → _build()
+
+On startup (or reset), 24 nodes are randomly placed on a 2D field:
+1 Sink, 3 Cluster Heads, 4 Relays, 1 Gateway, and the rest Sensors.
+A configurable number are randomly seeded as malicious with a random
+attack type. Each backend restart uses a fresh random seed, so the
+simulation looks different — and feels genuinely "live" — every time.
+
+------------------------------------------------------------------------
+5) THE WEBSOCKET PROTOCOL (how frontend and backend talk)
+------------------------------------------------------------------------
+
+Endpoint: ws://<backend-host>/ws/sim
+
+Server → Client (pushed automatically):
+    { "type": "snapshot", "payload": { ...full live state... } }
+
+Client → Server (sent when the user clicks something):
+    { "type": "action", "action": "inject",       "args": ["N-005", "Blackhole"] }
+    { "type": "action", "action": "isolate",      "args": ["N-005"] }
+    { "type": "action", "action": "restore",      "args": ["N-005"] }
+    { "type": "action", "action": "recoverAll",   "args": [] }
+    { "type": "action", "action": "reset",        "args": [{"nodes": 24, "malicious": 0}] }
+    { "type": "action", "action": "play",         "args": [] }
+    { "type": "action", "action": "pause",        "args": [] }
+    { "type": "action", "action": "step",         "args": [] }
+    { "type": "action", "action": "setSpeed",     "args": [1000] }
+    { "type": "action", "action": "setAutoAttack","args": [true] }
+
+Every action is applied to the ONE shared backend simulation, and the
+resulting snapshot is immediately broadcast to every connected browser
+— this is what makes multi-tab / multi-device viewing consistent.
+
+REST endpoints also remain available (for curl/Postman/grading
+inspection) at /api/nodes, /api/attacks, /api/ledger, /api/routes,
+/api/metrics, /api/sim/*, and a convenience /api/sim/snapshot that
+returns the exact same shape the WebSocket streams live.
+
+------------------------------------------------------------------------
+6) HOW TO RUN THE FULL PROJECT
+------------------------------------------------------------------------
+
+Terminal 1 — Backend:
+    cd backend
+    venv\Scripts\activate           (Windows)
+    uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+    The moment this starts, the simulation is LIVE and ticking — you
+    can confirm it by opening http://localhost:8001/api/sim/snapshot
+    and refreshing; the "tick" number keeps increasing even with no
+    frontend open.
+
+Terminal 2 — Frontend:
+    cd frontend
+    npm run dev
+
+    Opens at http://localhost:5173 — log in, and the console connects
+    to the backend automatically and starts showing live data.
+
+Docker (both together):
+    docker compose up --build
+
+    Backend on port 8001, frontend on port 5174 (served via nginx).
+
+------------------------------------------------------------------------
+7) IMPORTANT SETTINGS (backend/app/core/config.py)
+------------------------------------------------------------------------
+
+  TRUST_THRESHOLD  = 0.40   → nodes below this trust score are isolated
+  DROP_PENALTY     = 0.08   → how much trust drops per packet-loss event
+  DELAY_PENALTY    = 0.05   → how much trust drops per delay anomaly
+  BLOCK_DIFFICULTY = 2      → mining difficulty (leading zero hex digits)
+
+------------------------------------------------------------------------
+8) ATTACK TYPES — QUICK REFERENCE
+------------------------------------------------------------------------
+
+  Attack Type | Behaviour                              | Severity
+  ------------|------------------------------------------|----------
+  Blackhole   | Drops ~95% of all packets                | Critical
+  Wormhole    | Tunnels traffic, causes delay/topology    | Critical
+              | distortion
+  Grayhole    | Selectively drops ~50% of packets         | Medium
+              | (harder to detect — partly honest)
+  Sybil       | Forges multiple fake identities to gain   | High
+              | disproportionate routing influence
+
+------------------------------------------------------------------------
+9) KNOWN LIMITATIONS (documented, not accidental)
+------------------------------------------------------------------------
+
+  - No authentication on the WebSocket or simulation REST endpoints —
+    acceptable for a local classroom/demo deployment, not intended for
+    public internet exposure without adding auth.
+  - The simulation is entirely in-memory — restarting the backend
+    generates a brand new random network; nothing is persisted to a
+    database. Supabase is used only for user login, not simulation data.
+  - Only one backend worker process may run at a time (this is
+    required — the simulation state lives in that one process's
+    memory; running multiple workers would create multiple diverging
+    simulations instead of one shared live state).
+
+------------------------------------------------------------------------
+10) ONE-LINE SUMMARY
+------------------------------------------------------------------------
+
+A FastAPI backend continuously runs a live WSN simulation — a Trust
+Engine detects malicious nodes by their packet-drop and delay
+behaviour, a Trust-Aware AODV routing algorithm reroutes traffic
+around them, and every detection is sealed into an event-driven,
+Proof-of-Work blockchain for tamper-proof audit history — all streamed
+in real time over WebSocket to a React dashboard that displays it live,
+with zero simulation logic running in the browser itself.
+
+========================================================================
+ File location: PROJECT_FLOW_EXPLAINED.txt (project root)
+========================================================================

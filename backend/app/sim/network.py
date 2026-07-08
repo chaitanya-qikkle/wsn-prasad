@@ -21,6 +21,7 @@ SEVERITY = {"Blackhole": "Critical", "Sybil": "High", "Wormhole": "Critical", "G
 class Node:
     uid: str
     role: str = "Sensor"
+    label: str = ""
     pos: tuple[float, float] = (0.0, 0.0)
     energy: float = 100.0
     trust: float = 1.0
@@ -39,6 +40,7 @@ class WSNSimulator:
         self.chain = Blockchain(difficulty=self.s.BLOCK_DIFFICULTY)
         self.nodes: dict[str, Node] = {}
         self.detections: list[dict] = []
+        self.auto_healed: list[dict] = []
         self._build(n_nodes, n_malicious)
 
     def _build(self, n, m):
@@ -50,7 +52,7 @@ class WSNSimulator:
             role = "Sink" if i == 1 else roles[i - 1]
             mal = i in mal_ids
             self.nodes[uid] = Node(
-                uid=uid, role=role,
+                uid=uid, role=role, label=f"Field Node {uid[-2:]}",
                 pos=(round(self.rng.uniform(4, 96), 1), round(self.rng.uniform(4, 96), 1)),
                 energy=round(self.rng.uniform(40, 99), 1),
                 trust=round(self.rng.uniform(0.85, 0.99), 3),
@@ -62,8 +64,12 @@ class WSNSimulator:
     def evaluate_trust(self) -> list[dict]:
         """One evaluation round. Returns detections produced this round."""
         new_detections = []
+        self.auto_healed = []
         for n in self.nodes.values():
-            if n.role == "Sink" or n.isolated:
+            if n.role == "Sink":
+                continue
+            if n.isolated:
+                self._probation_tick(n)
                 continue
             # simulate one forwarding window
             traffic = self.rng.randint(20, 60)
@@ -102,6 +108,23 @@ class WSNSimulator:
                 d["block_index"] = blk.index
             self.detections.extend(new_detections)
         return new_detections
+
+    def _probation_tick(self, n: Node):
+        """Isolated nodes are excluded from routing/traffic, but if their
+        attack has genuinely stopped (malicious cleared — by the operator
+        or auto-attack toggling off) their trust is allowed to recover
+        slowly. Only once trust proves itself back above the threshold is
+        the node let back into the routing pool — never on a timer alone,
+        so a still-malicious node can never talk its way back in."""
+        if n.malicious:
+            return  # still actively attacking — no recovery, ever
+        trust_before = n.trust
+        n.trust = round(min(1.0, n.trust + 0.015), 3)
+        if n.trust >= self.s.TRUST_THRESHOLD:
+            n.isolated = False
+            self.auto_healed.append({
+                "node_uid": n.uid, "trust_before": trust_before, "trust_after": n.trust,
+            })
 
     def _make_detection(self, n: Node, trust_before, drop_ratio, delay_anom, identity) -> dict:
         attack = n.attack or "Grayhole"
@@ -148,7 +171,7 @@ class WSNSimulator:
             hops.append(dst)
         trusts = [self.nodes[h].trust for h in hops]
         return {
-            "src_uid": src, "dst_uid": dst, "hops": hops, "hop_count": len(hops) - 1,
+            "id": f"{src}-{dst}", "src_uid": src, "dst_uid": dst, "hops": hops, "hop_count": len(hops) - 1,
             "path_trust": round(min(trusts), 3), "latency": round(latency, 1),
             "is_active": True, "reconfigured": bool(avoided),
             "reason": f"Avoided isolated node {avoided[0]}" if avoided else None,
@@ -177,9 +200,50 @@ class WSNSimulator:
 
     def topology(self) -> list[dict]:
         return [{
-            "node_uid": n.uid, "label": f"Field Node {n.uid[-2:]}", "role": n.role,
+            "node_uid": n.uid, "label": n.label or f"Field Node {n.uid[-2:]}", "role": n.role,
             "pos_x": n.pos[0], "pos_y": n.pos[1], "energy": n.energy,
             "trust_score": n.trust, "is_malicious": n.malicious, "is_isolated": n.isolated,
             "status": "Isolated" if n.isolated else "Active",
             "packets_fwd": n.fwd, "packets_drop": n.drop, "avg_delay": round(n.delay, 1),
         } for n in self.nodes.values()]
+
+    # ── user actions (mirrors frontend engine.js semantics) ──────────────────
+    def inject_attack(self, uid: str, attack_type: str = "Blackhole") -> Node | None:
+        n = self.nodes.get(uid)
+        if not n or n.role == "Sink":
+            return None
+        n.malicious = True
+        n.attack = attack_type
+        n.isolated = False
+        # nudge trust just above threshold so the live drop is visible within a tick or two
+        n.trust = round(max(self.s.TRUST_THRESHOLD + 0.22, min(n.trust, 0.8)), 3)
+        return n
+
+    def isolate_node(self, uid: str) -> Node | None:
+        n = self.nodes.get(uid)
+        if not n:
+            return None
+        n.isolated = True
+        n.trust = 0.1
+        return n
+
+    def restore_node(self, uid: str) -> Node | None:
+        n = self.nodes.get(uid)
+        if not n:
+            return None
+        n.isolated = False
+        n.malicious = False
+        n.attack = None
+        n.trust = 0.85
+        return n
+
+    def recover_all(self) -> int:
+        cnt = 0
+        for n in self.nodes.values():
+            if n.malicious or n.isolated:
+                n.malicious = False
+                n.attack = None
+                n.isolated = False
+                n.trust = 0.85
+                cnt += 1
+        return cnt

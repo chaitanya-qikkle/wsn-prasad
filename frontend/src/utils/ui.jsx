@@ -273,7 +273,7 @@ export function useChartTip() {
 
 // ── palettes ──
 export const ATTACK_COLORS = {
-  Blackhole: '#ff4d6d', Sybil: '#7c6cff', Wormhole: '#ffab3d', Normal: '#25e6b8',
+  Blackhole: '#ff4d6d', Sybil: '#7c6cff', Wormhole: '#ffab3d', Grayhole: '#38bdf8', Normal: '#25e6b8',
 };
 export const SEVERITY_COLORS = {
   Critical: '#ff4d6d', High: '#ffab3d', Medium: '#ffd54a', Low: '#38bdf8',

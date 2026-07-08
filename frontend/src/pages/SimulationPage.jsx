@@ -16,7 +16,7 @@ import CheckCircleIcon  from '@mui/icons-material/CheckCircle';
 import { useSim } from '../sim/SimContext';
 import { PageHeader, Panel, LiveDot, useChartTip, ATTACK_COLORS, trustColor, popIn, pulse } from '../utils/ui';
 import { ACCENT, ACCENT2, NEON, DANGER, WARN } from '../context/ThemeContext';
-import { TRUST_THRESHOLD } from '../sim/engine';
+import { TRUST_THRESHOLD } from '../sim/constants';
 
 const ATTACKS = [
   { key: 'Blackhole', desc: 'Drops ~95% of packets — critical', color: ATTACK_COLORS.Blackhole,

@@ -2,6 +2,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+ARG VITE_API_BASE_URL=http://localhost:8001
+ARG VITE_WS_URL=ws://localhost:8001/ws/sim
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
+    VITE_WS_URL=$VITE_WS_URL
+
 COPY package*.json ./
 RUN npm install
 

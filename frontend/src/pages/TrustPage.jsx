@@ -10,7 +10,7 @@ import {
 import { useSim } from '../sim/SimContext';
 import { PageHeader, Panel, StatCard, ProgressRow, LiveDot, useChartTip, trustColor } from '../utils/ui';
 import { ACCENT, ACCENT2, NEON, DANGER, WARN } from '../context/ThemeContext';
-import { TRUST_THRESHOLD } from '../sim/engine';
+import { TRUST_THRESHOLD } from '../sim/constants';
 
 const SERIES_COLORS = [DANGER, WARN, ACCENT, NEON, ACCENT2, '#ffd54a', '#f472b6'];
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 
 
 class NodeOut(BaseModel):
@@ -34,6 +34,7 @@ class DetectionOut(BaseModel):
 
 
 class RouteOut(BaseModel):
+    id: Optional[str] = None
     src_uid: str
     dst_uid: str
     hops: List[str]
@@ -75,3 +76,63 @@ class DashboardOut(BaseModel):
     block_height: int
     chain_valid: bool
     metrics: MetricsOut
+
+
+class NotificationOut(BaseModel):
+    id: str
+    type: str
+    title: str
+    body: Optional[str] = None
+    severity: Optional[str] = None
+    read: bool
+    created_at: str
+
+
+class MetricsHistPoint(BaseModel):
+    time: str
+    pdr: float
+    delay: float
+    throughput: float
+    energy: float
+    overhead: float
+    malicious: int
+
+
+class StatsOut(BaseModel):
+    totalNodes: int
+    activeNodes: int
+    isolatedNodes: int
+    maliciousActive: int
+    maliciousNodes: int
+    trusted: int
+    suspect: int
+    belowThreshold: int
+    avgTrust: float
+    detections: int
+    blockHeight: int
+    reroutedPaths: int
+    pdr: float
+    unread: int
+
+
+class SnapshotOut(BaseModel):
+    tick: int
+    running: bool
+    interval: int
+    autoAttack: bool
+    nodes: List[NodeOut]
+    routes: List[RouteOut]
+    ledger: List[Dict[str, Any]]
+    attacks: List[DetectionOut]
+    notifications: List[NotificationOut]
+    trustHist: List[Dict[str, Any]]
+    metricsHist: List[MetricsHistPoint]
+    chainValid: bool
+    metrics: MetricsOut
+    stats: StatsOut
+
+
+class WsActionIn(BaseModel):
+    type: str = "action"
+    action: str
+    args: List[Any] = []

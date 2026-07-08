@@ -178,6 +178,12 @@ export default function MainLayout() {
       </Drawer>
 
       <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {sim.connected === false && (
+          <Box sx={{ px: 2, py: 0.8, textAlign: 'center', fontSize: 13, fontWeight: 700,
+            background: alpha(DANGER, 0.16), color: DANGER, borderBottom: `1px solid ${alpha(DANGER, 0.3)}` }}>
+            Reconnecting to simulation backend… live data will resume automatically.
+          </Box>
+        )}
         {/* top control strip — GLOBAL simulation controls */}
         <Box sx={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', alignItems: 'center', gap: 0.8,
           px: { xs: 1.5, md: 3 }, height: 60, background: alpha(panelBg, 0.75), backdropFilter: 'blur(20px)',
