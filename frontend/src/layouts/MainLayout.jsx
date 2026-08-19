@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   Box, Typography, IconButton, Avatar, Stack, Tooltip, Badge, Chip,
   useTheme, useMediaQuery, alpha, Drawer, Menu, MenuItem, Divider, ToggleButtonGroup, ToggleButton,
+  Snackbar, Alert,
 } from '@mui/material';
 import SpaceDashboardIcon from '@mui/icons-material/SpaceDashboard';
 import HubIcon            from '@mui/icons-material/Hub';
@@ -57,6 +58,25 @@ export default function MainLayout() {
   const [mOpen, setMOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const sim = useSim();
+  const [toast, setToast] = useState(null);
+  const seenIds = useRef(new Set());
+  const firstRun = useRef(true);
+
+  // surface a live toast the moment a new attack/isolation/critical alert lands,
+  // from anywhere in the console — not just the Notifications page
+  useEffect(() => {
+    const latest = sim.notifications[0];
+    if (firstRun.current) {
+      sim.notifications.forEach(n => seenIds.current.add(n.id));
+      firstRun.current = false;
+      return;
+    }
+    if (!latest || seenIds.current.has(latest.id)) return;
+    seenIds.current.add(latest.id);
+    if (latest.type === 'attack' || latest.type === 'isolation' || latest.severity === 'Critical') {
+      setToast(latest);
+    }
+  }, [sim.notifications]);
 
   const isActive = (p) => location.pathname === p;
   const handleSignOut = async () => { setAnchor(null); await signOut(); navigate('/login'); };
@@ -254,6 +274,16 @@ export default function MainLayout() {
           <Outlet />
         </Box>
       </Box>
+
+      <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        <Alert severity={toast?.type === 'isolation' ? 'error' : 'warning'} variant="filled"
+          onClose={() => setToast(null)} sx={{ borderRadius: 3, cursor: 'pointer', maxWidth: 360 }}
+          onClick={() => { if (toast?.node_uid) navigate('/topology', { state: { selectedNode: toast.node_uid } }); setToast(null); }}>
+          <Typography variant="body2" fontWeight={700}>{toast?.title}</Typography>
+          {toast?.body && <Typography variant="caption" display="block">{toast.body}</Typography>}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

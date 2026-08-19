@@ -1,5 +1,9 @@
 import React from 'react';
 import { Box, Card, Typography, Stack, useTheme, alpha, LinearProgress, Grid, keyframes } from '@mui/material';
+import BlockIcon        from '@mui/icons-material/Block';
+import CallSplitIcon    from '@mui/icons-material/CallSplit';
+import CycloneIcon      from '@mui/icons-material/Cyclone';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 
 /*  Redesigned shared UI kit — "cyber ops" surfaces, live indicators,
  *  sparklines and stat cards used across every console page.                */
@@ -7,6 +11,7 @@ import { Box, Card, Typography, Stack, useTheme, alpha, LinearProgress, Grid, ke
 export const pulse = keyframes`0%,100%{opacity:1}50%{opacity:.25}`;
 export const rise  = keyframes`from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}`;
 export const popIn = keyframes`0%{transform:scale(.7);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}`;
+export const spin  = keyframes`from{transform:rotate(0deg)}to{transform:rotate(360deg)}`;
 
 function cardShadow(theme) {
   return theme.palette.mode === 'dark'
@@ -288,3 +293,20 @@ export function trustColor(t) {
   if (t >= 0.4) return '#ffd54a';
   return '#ff4d6d';
 }
+
+// Distinct areas on the topology map — one Cluster Head per zone.
+export const ZONE_COLORS = ['#7c6cff', '#38bdf8', '#ffab3d', '#25e6b8', '#f472b6', '#a3e635'];
+export function zoneColor(label) {
+  if (!label) return '#94a3b8';
+  const idx = (label.charCodeAt(label.length - 1) - 65) % ZONE_COLORS.length;
+  return ZONE_COLORS[idx < 0 ? 0 : idx];
+}
+
+// "Different tricks for different isolation" — each attack type quarantines
+// with a distinct icon + ring animation so the map reads differently per attack.
+export const ISOLATION_TREATMENT = {
+  Blackhole: { Icon: BlockIcon,        ringAnim: pulse, dash: 'none' },
+  Sybil:     { Icon: CallSplitIcon,    ringAnim: pulse, dash: '2 3' },
+  Wormhole:  { Icon: CycloneIcon,      ringAnim: spin,  dash: '4 3' },
+  Grayhole:  { Icon: VisibilityOffIcon, ringAnim: pulse, dash: '1 4' },
+};

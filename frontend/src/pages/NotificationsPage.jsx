@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Box, Card, Typography, Stack, Chip, Button, IconButton, alpha, useTheme } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import DoneAllIcon       from '@mui/icons-material/DoneAll';
@@ -24,11 +25,21 @@ const FILTERS = ['All', 'Unread', 'attack', 'isolation', 'recovery', 'warning'];
 export default function NotificationsPage() {
   const theme = useTheme();
   const sim = useSim();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState('All');
 
   const items = sim.notifications;
   const filtered = items.filter(n => filter === 'All' ? true : filter === 'Unread' ? !n.read : n.type === filter);
   const unread = items.filter(n => !n.read).length;
+
+  const openNotification = (n) => {
+    sim.markRead(n.id);
+    if (n.type === 'attack' || n.type === 'isolation' || n.type === 'warning') {
+      if (n.node_uid) navigate('/topology', { state: { selectedNode: n.node_uid } });
+    } else if (n.type === 'recovery') {
+      navigate('/attacks');
+    }
+  };
 
   return (
     <Box sx={{ maxWidth: 880, mx: 'auto' }}>
@@ -62,9 +73,11 @@ export default function NotificationsPage() {
       ) : (
         <Stack spacing={1.5}>
           {filtered.map((n, i) => (
-            <Card key={n.id} sx={{ p: 2, animation: i === 0 ? `${popIn} .4s ease` : 'none',
+            <Card key={n.id} onClick={() => openNotification(n)}
+              sx={{ p: 2, cursor: 'pointer', animation: i === 0 ? `${popIn} .4s ease` : 'none',
               border: `1px solid ${n.read ? theme.palette.divider : alpha(typeColor[n.type] || theme.palette.primary.main, 0.35)}`,
-              background: n.read ? 'transparent' : alpha(typeColor[n.type] || theme.palette.primary.main, 0.05) }}>
+              background: n.read ? 'transparent' : alpha(typeColor[n.type] || theme.palette.primary.main, 0.05),
+              transition: 'transform .15s', '&:hover': { transform: 'translateX(2px)' } }}>
               <Stack direction="row" spacing={2} alignItems="flex-start">
                 <Box mt={0.3}>{typeIcon[n.type] || typeIcon.info}</Box>
                 <Box flex={1} minWidth={0}>
@@ -75,8 +88,8 @@ export default function NotificationsPage() {
                     </Box>
                     <Stack direction="row" spacing={0.5} ml={1}>
                       {!n.read && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: typeColor[n.type] || theme.palette.primary.main, mt: 0.8 }} />}
-                      <IconButton size="small" onClick={() => sim.markRead(n.id)} disabled={n.read}><DoneAllIcon sx={{ fontSize: 16 }} /></IconButton>
-                      <IconButton size="small" onClick={() => sim.dismiss(n.id)} sx={{ '&:hover': { color: '#ff4d6d' } }}><DeleteOutlineIcon sx={{ fontSize: 16 }} /></IconButton>
+                      <IconButton size="small" onClick={(e) => { e.stopPropagation(); sim.markRead(n.id); }} disabled={n.read}><DoneAllIcon sx={{ fontSize: 16 }} /></IconButton>
+                      <IconButton size="small" onClick={(e) => { e.stopPropagation(); sim.dismiss(n.id); }} sx={{ '&:hover': { color: '#ff4d6d' } }}><DeleteOutlineIcon sx={{ fontSize: 16 }} /></IconButton>
                     </Stack>
                   </Stack>
                   <Stack direction="row" spacing={1.5} alignItems="center" mt={0.8}>

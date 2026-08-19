@@ -12,8 +12,9 @@ import LinkIcon      from '@mui/icons-material/Link';
 import ReportIcon    from '@mui/icons-material/Report';
 import BlockIcon     from '@mui/icons-material/Block';
 import HealingIcon   from '@mui/icons-material/Healing';
+import TimerIcon     from '@mui/icons-material/Timer';
 import { useSim } from '../sim/SimContext';
-import { PageHeader, StatCard, LiveDot, ATTACK_COLORS, SEVERITY_COLORS, STATUS_COLORS } from '../utils/ui';
+import { PageHeader, Panel, StatCard, LiveDot, ATTACK_COLORS, SEVERITY_COLORS, STATUS_COLORS } from '../utils/ui';
 import { ACCENT, DANGER, WARN, ACCENT2 } from '../context/ThemeContext';
 
 const ATTACK_TYPES = ['All', 'Blackhole', 'Sybil', 'Wormhole', 'Grayhole'];
@@ -49,6 +50,25 @@ export default function AttacksPage() {
   const isolated  = all.filter(a => a.status === 'Isolated').length;
   const detected  = all.filter(a => a.status === 'Detected').length;
 
+  // "different attack type, recovered or not, how long it took"
+  const recoveryByType = useMemo(() => {
+    const byType = {};
+    (sim.recoveryEvents || []).forEach(ev => {
+      const t = ev.attack_type || 'Unknown';
+      (byType[t] ??= []).push(ev);
+    });
+    return Object.entries(byType).map(([type, events]) => ({
+      type, count: events.length,
+      auto: events.filter(e => e.method === 'auto').length,
+      manual: events.filter(e => e.method === 'manual').length,
+      avgSec: events.reduce((s, e) => s + e.duration_sec, 0) / events.length,
+    })).sort((a, b) => b.count - a.count);
+  }, [sim.recoveryEvents]);
+  const stillIsolated = {};
+  ATTACK_TYPES.filter(t => t !== 'All').forEach(t => {
+    stillIsolated[t] = sim.nodes.filter(n => n.is_isolated && n.attack === t).length;
+  });
+
   return (
     <Box>
       <PageHeader icon={<GppMaybeIcon />} title="Attack Detection" accent={WARN}
@@ -61,6 +81,36 @@ export default function AttacksPage() {
         <Grid item xs={6} md={3}><StatCard icon={<BlockIcon />} label="Isolated" value={isolated} color={WARN} sub="quarantined" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<HealingIcon />} label="Monitored" value={detected} color={ACCENT2} sub="penalized, watched" /></Grid>
       </Grid>
+
+      <Panel title="Recovery Analytics" accent={ACCENT2} sx={{ mb: 2.5 }}
+        action={<Typography variant="caption" color="text.secondary">recovered or not, per attack type — and how long it took</Typography>}>
+        {recoveryByType.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">No recoveries yet — isolate or wait for a node to auto-heal to populate this.</Typography>
+        ) : (
+          <Grid container spacing={2}>
+            {recoveryByType.map(r => (
+              <Grid item xs={12} sm={6} md={3} key={r.type}>
+                <Box sx={{ p: 1.6, borderRadius: 2.5, border: `1px solid ${alpha(ATTACK_COLORS[r.type] || ACCENT, 0.25)}`,
+                  background: alpha(ATTACK_COLORS[r.type] || ACCENT, 0.06) }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.6}>
+                    <Typography variant="body2" fontWeight={800} sx={{ color: ATTACK_COLORS[r.type] || ACCENT }}>{r.type}</Typography>
+                    {stillIsolated[r.type] > 0 &&
+                      <Chip size="small" label={`${stillIsolated[r.type]} still isolated`} sx={{ height: 18, fontSize: 9, bgcolor: alpha(DANGER, 0.14), color: DANGER, fontWeight: 700 }} />}
+                  </Stack>
+                  <Stack direction="row" spacing={0.6} alignItems="baseline" mb={0.4}>
+                    <TimerIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                    <Typography variant="h6" fontWeight={800} fontFamily="'JetBrains Mono', monospace">{r.avgSec.toFixed(0)}s</Typography>
+                    <Typography variant="caption" color="text.secondary">avg recovery</Typography>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {r.count} recovered — {r.auto} auto-healed, {r.manual} manual
+                  </Typography>
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        )}
+      </Panel>
 
       <Card sx={{ p: 2, mb: 2.5, boxShadow: 'none' }}>
         <Grid container spacing={1.5}>

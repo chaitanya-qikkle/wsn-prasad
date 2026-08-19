@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Box, Grid, Typography, Stack, Chip, useTheme, alpha, Card, Button, Divider } from '@mui/material';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Box, Grid, Typography, Stack, Chip, useTheme, alpha, Card, Button, Divider, Tooltip } from '@mui/material';
 import HubIcon      from '@mui/icons-material/Hub';
 import BlockIcon    from '@mui/icons-material/Block';
 import RestoreIcon  from '@mui/icons-material/Restore';
@@ -7,14 +8,24 @@ import RouterIcon   from '@mui/icons-material/Router';
 import SensorsIcon  from '@mui/icons-material/Sensors';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import { useSim } from '../sim/SimContext';
-import { PageHeader, Panel, StatCard, LiveDot, LegendDot, trustColor, STATUS_COLORS } from '../utils/ui';
+import {
+  PageHeader, Panel, StatCard, LiveDot, LegendDot, trustColor, STATUS_COLORS,
+  zoneColor, ISOLATION_TREATMENT, pulse,
+} from '../utils/ui';
 import { ACCENT, ACCENT2, WARN, DANGER } from '../context/ThemeContext';
 
 export default function TopologyPage() {
   const theme = useTheme();
   const grid = theme.palette.divider;
   const sim = useSim();
+  const location = useLocation();
   const [selected, setSelected] = useState(null);
+  const [activeZone, setActiveZone] = useState(null);
+
+  // arriving from a Notifications card click — pre-select the node it named
+  useEffect(() => {
+    if (location.state?.selectedNode) setSelected(location.state.selectedNode);
+  }, [location.state]);
 
   const nodes = sim.nodes;
   const routes = sim.routes.filter(r => r.is_active).slice(0, 8);
@@ -27,6 +38,22 @@ export default function TopologyPage() {
 
   const X = (x) => 40 + (x / 100) * 920;
   const Y = (y) => 30 + (y / 100) * 540;
+
+  // ── zones — group nodes under their Cluster Head so the map shows areas ──
+  const zones = useMemo(() => {
+    const byZone = {};
+    nodes.forEach(n => {
+      if (!n.zone_label) return;
+      (byZone[n.zone_label] ??= []).push(n);
+    });
+    return Object.entries(byZone).map(([label, members]) => {
+      const cx = members.reduce((s, n) => s + n.pos_x, 0) / members.length;
+      const cy = members.reduce((s, n) => s + n.pos_y, 0) / members.length;
+      const radius = Math.max(14, ...members.map(n => Math.hypot(n.pos_x - cx, n.pos_y - cy))) + 8;
+      const hasThreat = members.some(n => n.is_malicious && !n.is_isolated);
+      return { label, members, cx, cy, radius, color: zoneColor(label), hasThreat };
+    });
+  }, [nodes]);
 
   return (
     <Box>
@@ -46,6 +73,22 @@ export default function TopologyPage() {
         <Grid item xs={6} md={3}><StatCard icon={<AltRouteIcon />} label="Rerouted" value={rerouted} color={WARN} sub="avoided bad nodes" /></Grid>
       </Grid>
 
+      <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap alignItems="center">
+        <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase" letterSpacing={0.6} mr={0.5}>Areas</Typography>
+        <Chip label="All zones" size="small" clickable onClick={() => setActiveZone(null)}
+          sx={{ fontWeight: activeZone === null ? 700 : 500,
+            bgcolor: activeZone === null ? alpha(ACCENT, 0.18) : alpha(theme.palette.text.primary, 0.05),
+            color: activeZone === null ? ACCENT : 'text.secondary' }} />
+        {zones.map(z => (
+          <Chip key={z.label} label={z.label} size="small" clickable onClick={() => setActiveZone(activeZone === z.label ? null : z.label)}
+            icon={z.hasThreat ? <BlockIcon sx={{ fontSize: 13 }} /> : undefined}
+            sx={{ fontWeight: activeZone === z.label ? 700 : 500,
+              bgcolor: activeZone === z.label ? alpha(z.color, 0.22) : alpha(z.color, 0.08),
+              color: z.color, border: `1px solid ${alpha(z.color, activeZone === z.label ? 0.6 : 0.25)}`,
+              '& .MuiChip-icon': { color: DANGER } }} />
+        ))}
+      </Stack>
+
       <Grid container spacing={2.5}>
         <Grid item xs={12} lg={8.5}>
           <Card sx={{ p: 1.2 }}>
@@ -60,14 +103,30 @@ export default function TopologyPage() {
                 <line key={'h' + i} x1={40} y1={30 + i * 90} x2={960} y2={30 + i * 90} stroke={grid} strokeWidth={0.5} />
               ))}
 
+              {/* zone areas — soft boundary + label per Cluster Head grouping */}
+              {zones.map(z => {
+                const dim = activeZone && activeZone !== z.label;
+                const rx = (z.radius / 100) * 920, ry = (z.radius / 100) * 540;
+                return (
+                  <g key={z.label} opacity={dim ? 0.15 : 1} style={{ transition: 'opacity .25s' }}>
+                    <ellipse cx={X(z.cx)} cy={Y(z.cy)} rx={rx} ry={ry}
+                      fill={alpha(z.color, 0.06)} stroke={alpha(z.color, 0.4)} strokeWidth={1.2} strokeDasharray="6 5" />
+                    <text x={X(z.cx)} y={Y(z.cy) - ry - 8} fontSize={11} fontWeight={800} textAnchor="middle" fill={z.color}>
+                      {z.label}{z.hasThreat ? ' ⚠' : ''}
+                    </text>
+                  </g>
+                );
+              })}
+
               {/* routes + animated packets */}
               {routes.map((r, ri) => {
                 const pts = (r.hops || []).map(h => byUid[h]).filter(Boolean);
+                const dim = activeZone && !pts.some(p => p.zone_label === activeZone);
                 return pts.slice(0, -1).map((p, i) => {
                   const q = pts[i + 1];
                   const stroke = r.reconfigured ? WARN : alpha(ACCENT, 0.55);
                   return (
-                    <g key={`r${ri}-${i}`}>
+                    <g key={`r${ri}-${i}`} opacity={dim ? 0.12 : 1} style={{ transition: 'opacity .25s' }}>
                       <line x1={X(p.pos_x)} y1={Y(p.pos_y)} x2={X(q.pos_x)} y2={Y(q.pos_y)}
                         stroke={stroke} strokeWidth={1.6} strokeDasharray={r.reconfigured ? '5 4' : 'none'} />
                       <circle r={2.6} fill={r.reconfigured ? WARN : ACCENT}>
@@ -84,19 +143,43 @@ export default function TopologyPage() {
                 const c = n.is_isolated || n.is_malicious ? DANGER : trustColor(n.trust_score);
                 const r = isSink ? 16 : n.role === 'Cluster Head' ? 12 : 9;
                 const hot = n.is_malicious || n.is_isolated;
+                const cx = X(n.pos_x), cy = Y(n.pos_y);
+                const treatment = ISOLATION_TREATMENT[n.attack];
+                const dim = activeZone && n.zone_label && n.zone_label !== activeZone;
+                const tip = `${n.node_uid} · ${n.role} · trust ${n.trust_score?.toFixed(2)}${n.zone_label ? ` · ${n.zone_label}` : ''}${n.is_isolated ? ' · ISOLATED' : n.is_malicious ? ` · ${n.attack}` : ''}`;
                 return (
-                  <g key={n.node_uid} style={{ cursor: 'pointer' }} onClick={() => setSelected(n.node_uid)}>
-                    {isSink && <circle cx={X(n.pos_x)} cy={Y(n.pos_y)} r={30} fill="url(#sinkGlow)" />}
-                    {selected === n.node_uid && <circle cx={X(n.pos_x)} cy={Y(n.pos_y)} r={r + 7} fill="none" stroke={ACCENT} strokeWidth={2} />}
-                    {hot && <circle cx={X(n.pos_x)} cy={Y(n.pos_y)} r={r + 5} fill="none" stroke={c} strokeWidth={1.5} opacity={0.6}>
-                      <animate attributeName="r" values={`${r + 3};${r + 10}`} dur="1.4s" repeatCount="indefinite" />
-                      <animate attributeName="opacity" values="0.6;0" dur="1.4s" repeatCount="indefinite" />
-                    </circle>}
-                    <circle cx={X(n.pos_x)} cy={Y(n.pos_y)} r={r} fill={alpha(c, 0.85)} stroke={c} strokeWidth={2} />
-                    {isSink && <circle cx={X(n.pos_x)} cy={Y(n.pos_y)} r={r + 4} fill="none" stroke={c} strokeWidth={1} strokeDasharray="3 3" />}
-                    <text x={X(n.pos_x)} y={Y(n.pos_y) - r - 5} fontSize={10} textAnchor="middle"
+                  <Tooltip key={n.node_uid} title={tip} arrow>
+                  <g style={{ cursor: 'pointer', opacity: dim ? 0.18 : 1, transition: 'opacity .25s' }}
+                    onClick={() => setSelected(n.node_uid)}>
+                    {isSink && <circle cx={cx} cy={cy} r={30} fill="url(#sinkGlow)" />}
+                    {selected === n.node_uid && <circle cx={cx} cy={cy} r={r + 7} fill="none" stroke={ACCENT} strokeWidth={2} />}
+
+                    {/* isolation "trick" — distinct ring treatment per attack type once quarantined */}
+                    {n.is_isolated && treatment ? (
+                      <circle cx={cx} cy={cy} r={r + 6} fill="none" stroke={c} strokeWidth={1.6} strokeDasharray={treatment.dash} opacity={0.75}>
+                        {treatment.ringAnim === pulse
+                          ? <animate attributeName="opacity" values="0.8;0.25;0.8" dur="1.6s" repeatCount="indefinite" />
+                          : <animateTransform attributeName="transform" type="rotate" from={`0 ${cx} ${cy}`} to={`360 ${cx} ${cy}`} dur="3s" repeatCount="indefinite" />}
+                      </circle>
+                    ) : hot && (
+                      <circle cx={cx} cy={cy} r={r + 5} fill="none" stroke={c} strokeWidth={1.5} opacity={0.6}>
+                        <animate attributeName="r" values={`${r + 3};${r + 10}`} dur="1.4s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.6;0" dur="1.4s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+
+                    <circle cx={cx} cy={cy} r={r} fill={alpha(c, 0.85)} stroke={c} strokeWidth={2} />
+                    {isSink && <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke={c} strokeWidth={1} strokeDasharray="3 3" />}
+                    {n.is_isolated && treatment && (
+                      <g transform={`translate(${cx + r - 3}, ${cy - r - 3})`}>
+                        <circle r={7} fill={theme.palette.background.paper} stroke={c} strokeWidth={1} />
+                        <treatment.Icon sx={{ fontSize: 10, color: c }} style={{ transform: 'translate(-5px,-5px)' }} />
+                      </g>
+                    )}
+                    <text x={cx} y={cy - r - 5} fontSize={10} textAnchor="middle"
                       fill={theme.palette.text.secondary} fontFamily="'JetBrains Mono', monospace">{n.node_uid}</text>
                   </g>
+                  </Tooltip>
                 );
               })}
             </Box>
@@ -114,6 +197,7 @@ export default function TopologyPage() {
                 </Stack>
                 <Typography variant="body2" color="text.secondary">{sel.label} · {sel.role}</Typography>
                 <Divider sx={{ borderColor: grid }} />
+                {sel.zone_label && <InfoRow label="Area" value={sel.zone_label} color={zoneColor(sel.zone_label)} />}
                 <InfoRow label="Trust score" value={sel.trust_score.toFixed(3)} color={trustColor(sel.trust_score)} />
                 <InfoRow label="Energy" value={`${sel.energy.toFixed(0)}%`} />
                 <InfoRow label="Packets forwarded" value={sel.packets_fwd} />

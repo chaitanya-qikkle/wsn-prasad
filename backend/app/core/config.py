@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     DROP_PENALTY:      float = 0.08      # trust drop per detected packet loss event
     DELAY_PENALTY:     float = 0.05
     BLOCK_DIFFICULTY:  int = 2           # leading-zero difficulty for PoW demo
+    MAX_MALICIOUS_PCT: float = 0.25      # attack containment cap — never let more than this
+                                          # share of the network be compromised at once
 
     CORS_ORIGINS: list[str] = [
         "http://localhost:5174",

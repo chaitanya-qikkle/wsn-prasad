@@ -55,6 +55,7 @@ const EMPTY_SNAPSHOT = {
   stats: { totalNodes: 0, activeNodes: 0, isolatedNodes: 0, maliciousActive: 0,
     maliciousNodes: 0, trusted: 0, suspect: 0, belowThreshold: 0, avgTrust: 0,
     detections: 0, blockHeight: 0, reroutedPaths: 0, pdr: 0, unread: 0 },
+  recoveryEvents: [], maliciousCap: { used: 0, max: 0 },
 };
 
 export function useSim() {

@@ -13,6 +13,9 @@ import RestartAltIcon   from '@mui/icons-material/RestartAlt';
 import HealingIcon      from '@mui/icons-material/Healing';
 import BoltIcon         from '@mui/icons-material/Bolt';
 import CheckCircleIcon  from '@mui/icons-material/CheckCircle';
+import ShieldIcon       from '@mui/icons-material/Shield';
+import TrendingUpIcon   from '@mui/icons-material/TrendingUp';
+import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useSim } from '../sim/SimContext';
 import { PageHeader, Panel, LiveDot, useChartTip, ATTACK_COLORS, trustColor, popIn, pulse } from '../utils/ui';
 import { ACCENT, ACCENT2, NEON, DANGER, WARN } from '../context/ThemeContext';
@@ -37,15 +40,22 @@ export default function SimulationPage() {
   const [target, setTarget] = useState('');
   const [focus, setFocus]   = useState('');   // node the guided walkthrough is following
   const [toast, setToast]   = useState(null);
+  const [snapshots, setSnapshots] = useState({}); // node_uid -> stats captured at injection time
 
   const byUid = useMemo(() => Object.fromEntries(sim.nodes.map(n => [n.node_uid, n])), [sim.nodes]);
   const nodes = sim.nodes.filter(n => n.role !== 'Sink');
   const cleanNodes = nodes.filter(n => !n.is_malicious && !n.is_isolated);
   const effectiveTarget = target || cleanNodes[0]?.node_uid || '';
   const attackMeta = ATTACKS.find(a => a.key === attack);
+  const cap = sim.maliciousCap || { used: 0, max: 0 };
+  const capReached = cap.max > 0 && cap.used >= cap.max;
 
   const inject = () => {
     if (!effectiveTarget) { setToast({ sev: 'warning', text: 'No healthy node available to attack.' }); return; }
+    if (capReached) { setToast({ sev: 'warning', text: `Attack cap reached (${cap.used}/${cap.max}) — contain and recover a node first.` }); return; }
+    setSnapshots(s => ({ ...s, [effectiveTarget]: {
+      pdr: sim.stats.pdr, activeNodes: sim.stats.activeNodes, avgTrust: sim.stats.avgTrust, isolatedNodes: sim.stats.isolatedNodes,
+    } }));
     sim.inject(effectiveTarget, attack);
     setFocus(effectiveTarget);
     setToast({ sev: 'success', text: `${attack} launched on ${effectiveTarget} — follow the walkthrough on the right.` });
@@ -60,6 +70,8 @@ export default function SimulationPage() {
   const fNode = byUid[focusUid];
   const fDet  = sim.attacks.find(a => a.node_uid === focusUid);
   const recovered = fNode && !fNode.is_malicious && !fNode.is_isolated && !!fDet;
+  const fRecovery = [...sim.recoveryEvents].reverse().find(e => e.node_uid === focusUid);
+  const fSnapshot = snapshots[focusUid];
 
   let activeStep;
   if (!focusUid || !fNode) activeStep = 0;
@@ -94,7 +106,9 @@ export default function SimulationPage() {
         ? `${focusUid} is quarantined and the detection is sealed into event-driven block #${fDet.block_index}. This is the project's novelty — a block is minted only when an attack happens.`
         : 'The node is quarantined and a single blockchain block is sealed for tamper-proof provenance.' },
     { label: 'Rerouted & recovered', color: ACCENT2,
-      body: `Trust-aware AODV rebuilds routes around ${focusUid || 'the isolated node'}. Packet delivery climbs back up — currently ${(latest.pdr ?? 0).toFixed(0)}%.` },
+      body: fRecovery
+        ? `${focusUid} was ${fRecovery.method === 'auto' ? 'auto-healed by the trust engine' : 'manually restored by the operator'} after ${fRecovery.duration_sec.toFixed(0)}s isolated. Trust-aware AODV rebuilt routes around it while it was out — packet delivery is now ${(latest.pdr ?? 0).toFixed(0)}%.`
+        : `Trust-aware AODV rebuilds routes around ${focusUid || 'the isolated node'}. Packet delivery climbs back up — currently ${(latest.pdr ?? 0).toFixed(0)}%.` },
   ];
 
   return (
@@ -168,21 +182,30 @@ export default function SimulationPage() {
               ))}
             </TextField>
 
-            <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase" letterSpacing={0.6}>
-              3 · Launch it
-            </Typography>
-            <Button fullWidth variant="contained" size="large" disabled={!effectiveTarget} onClick={inject} startIcon={<BoltIcon />}
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase" letterSpacing={0.6}>
+                3 · Launch it
+              </Typography>
+              <Tooltip title="Attacks are capped so an incident can never take over the whole network — contain and recover before the cap frees up.">
+                <Chip size="small" icon={<ShieldIcon sx={{ fontSize: 13 }} />} label={`${cap.used}/${cap.max} compromised`}
+                  sx={{ height: 20, fontSize: 10.5, fontWeight: 700,
+                    bgcolor: alpha(capReached ? DANGER : ACCENT2, 0.14), color: capReached ? DANGER : ACCENT2 }} />
+              </Tooltip>
+            </Stack>
+            <Button fullWidth variant="contained" size="large" disabled={!effectiveTarget || capReached} onClick={inject} startIcon={<BoltIcon />}
               sx={{ mt: 0.8, py: 1.4, fontWeight: 800, letterSpacing: 0.6, borderRadius: 3,
                 background: `linear-gradient(135deg, ${DANGER}, ${WARN})`, color: '#0a0a12',
                 boxShadow: `0 10px 30px ${alpha(DANGER, 0.45)}`,
                 '&:hover': { background: `linear-gradient(135deg, ${WARN}, ${DANGER})` } }}>
-              Inject {attack} Attack — Live
+              {capReached ? 'Attack Cap Reached' : `Inject ${attack} Attack — Live`}
             </Button>
 
             <Stack direction="row" spacing={1.2} mt={1.5}>
-              <Button fullWidth variant="outlined" size="small" startIcon={<HealingIcon />}
-                onClick={() => { sim.recoverAll(); setToast({ sev: 'success', text: 'Recovering all nodes…' }); }}
-                sx={{ borderColor: alpha(ACCENT2, 0.5), color: ACCENT2 }}>Recover All</Button>
+              <Tooltip title="Resets every malicious/isolated node back to its last known-good trust baseline — the project's recovery backup.">
+                <Button fullWidth variant="outlined" size="small" startIcon={<HealingIcon />}
+                  onClick={() => { sim.recoverAll(); setToast({ sev: 'success', text: 'Restoring all nodes from trust backup…' }); }}
+                  sx={{ borderColor: alpha(ACCENT2, 0.5), color: ACCENT2 }}>Restore from Backup</Button>
+              </Tooltip>
               <Button fullWidth variant="outlined" size="small" startIcon={<RestartAltIcon />}
                 onClick={() => { sim.reset({ nodes: 24, malicious: 0 }); setFocus(''); setToast({ sev: 'info', text: 'Network reset — 24 clean nodes.' }); }}
                 sx={{ borderColor: alpha(ACCENT, 0.5), color: ACCENT }}>Reset Network</Button>
@@ -241,9 +264,24 @@ export default function SimulationPage() {
               </Stepper>
             )}
 
+            {fSnapshot && activeStep >= 3 && (
+              <Box mt={2}>
+                <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase" letterSpacing={0.6} mb={0.8} display="block">
+                  Before injection → Right now
+                </Typography>
+                <Stack direction="row" spacing={1.5}>
+                  <Delta label="PDR" before={fSnapshot.pdr} now={sim.stats.pdr} unit="%" goodUp />
+                  <Delta label="Active nodes" before={fSnapshot.activeNodes} now={sim.stats.activeNodes} goodUp />
+                  <Delta label="Avg trust" before={fSnapshot.avgTrust} now={sim.stats.avgTrust} decimals={2} goodUp />
+                  <Delta label="Isolated" before={fSnapshot.isolatedNodes} now={sim.stats.isolatedNodes} />
+                </Stack>
+              </Box>
+            )}
+
             {recovered && (
               <Alert icon={<CheckCircleIcon />} severity="success" sx={{ mt: 1, borderRadius: 2 }}>
-                Threat neutralised — {focusUid} handled end-to-end: detected, isolated, sealed on-chain and routed around.
+                Threat neutralised — {focusUid} handled end-to-end: detected, isolated, sealed on-chain and routed around
+                {fRecovery && ` in ${fRecovery.duration_sec.toFixed(0)}s`}.
               </Alert>
             )}
           </Panel>
@@ -343,6 +381,22 @@ export default function SimulationPage() {
   );
 }
 
+function Delta({ label, before, now, unit = '', decimals = 0, goodUp = false }) {
+  const diff = (now ?? 0) - (before ?? 0);
+  const improved = goodUp ? diff >= 0 : diff <= 0;
+  const color = diff === 0 ? undefined : improved ? '#25e6b8' : '#ff4d6d';
+  const Icon = diff === 0 ? null : diff > 0 ? TrendingUpIcon : TrendingDownIcon;
+  return (
+    <Box flex={1} textAlign="center">
+      <Typography variant="caption" color="text.secondary" fontSize={9.5} fontWeight={700} textTransform="uppercase" letterSpacing={0.4} display="block">{label}</Typography>
+      <Stack direction="row" spacing={0.3} justifyContent="center" alignItems="center" mt={0.3}>
+        <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, fontSize: 15 }}>{now?.toFixed?.(decimals) ?? now}{unit}</Typography>
+        {Icon && <Icon sx={{ fontSize: 13, color }} />}
+      </Stack>
+      <Typography variant="caption" color="text.secondary" fontSize={9.5}>was {before?.toFixed?.(decimals) ?? before}{unit}</Typography>
+    </Box>
+  );
+}
 function Stat({ label, value, color }) {
   return (
     <Box textAlign="center">

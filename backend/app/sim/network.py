@@ -8,6 +8,7 @@ routes are rebuilt to avoid them. Each detection seals an event-driven block.
 """
 import random
 import math
+import time
 from dataclasses import dataclass, field
 
 from .blockchain import Blockchain
@@ -31,6 +32,9 @@ class Node:
     fwd: int = 0
     drop: int = 0
     delay: float = 0.0
+    zone: str = ""
+    zone_label: str = ""
+    isolated_at: float | None = None
 
 
 class WSNSimulator:
@@ -41,6 +45,7 @@ class WSNSimulator:
         self.nodes: dict[str, Node] = {}
         self.detections: list[dict] = []
         self.auto_healed: list[dict] = []
+        self.recovery_events: list[dict] = []
         self._build(n_nodes, n_malicious)
 
     def _build(self, n, m):
@@ -59,6 +64,24 @@ class WSNSimulator:
                 malicious=mal,
                 attack=self.rng.choice(ATTACKS) if mal else None,
             )
+        self._assign_zones()
+
+    def _assign_zones(self):
+        """Group every node under its nearest Cluster Head — 'Zone A/B/C…' —
+        so the topology map can show areas instead of one flat field."""
+        heads = [n for n in self.nodes.values() if n.role == "Cluster Head"]
+        letters = "ABCDEFGH"
+        for i, h in enumerate(heads):
+            h.zone = h.uid
+            h.zone_label = f"Zone {letters[i % len(letters)]}"
+        if not heads:
+            return
+        for n in self.nodes.values():
+            if n.role in ("Sink", "Cluster Head"):
+                continue
+            nearest = min(heads, key=lambda h: self._dist(n, h))
+            n.zone = nearest.zone
+            n.zone_label = nearest.zone_label
 
     # ── trust engine ────────────────────────────────────────────────────────
     def evaluate_trust(self) -> list[dict]:
@@ -122,15 +145,29 @@ class WSNSimulator:
         n.trust = round(min(1.0, n.trust + 0.015), 3)
         if n.trust >= self.s.TRUST_THRESHOLD:
             n.isolated = False
+            duration = (time.time() - n.isolated_at) if n.isolated_at else 0.0
             self.auto_healed.append({
                 "node_uid": n.uid, "trust_before": trust_before, "trust_after": n.trust,
+                "duration_sec": round(duration, 1),
             })
+            self._record_recovery(n, method="auto")
+
+    def _record_recovery(self, n: Node, method: str):
+        """Log how long a node stayed isolated before this recovery."""
+        duration = (time.time() - n.isolated_at) if n.isolated_at else 0.0
+        self.recovery_events.append({
+            "node_uid": n.uid, "attack_type": n.attack, "zone_label": n.zone_label,
+            "method": method, "duration_sec": round(duration, 1),
+            "recovered_at": time.time(),
+        })
+        n.isolated_at = None
 
     def _make_detection(self, n: Node, trust_before, drop_ratio, delay_anom, identity) -> dict:
         attack = n.attack or "Grayhole"
         # isolate if below threshold
         if n.trust < self.s.TRUST_THRESHOLD:
             n.isolated = True
+            n.isolated_at = time.time()
             status, mitigation = "Isolated", "Node isolated; routes reconfigured"
         else:
             status, mitigation = "Detected", "Trust penalized; monitored"
@@ -205,16 +242,31 @@ class WSNSimulator:
             "trust_score": n.trust, "is_malicious": n.malicious, "is_isolated": n.isolated,
             "status": "Isolated" if n.isolated else "Active",
             "packets_fwd": n.fwd, "packets_drop": n.drop, "avg_delay": round(n.delay, 1),
+            "zone": n.zone, "zone_label": n.zone_label,
         } for n in self.nodes.values()]
+
+    # ── attack containment cap ────────────────────────────────────────────────
+    def malicious_count(self) -> int:
+        return sum(1 for n in self.nodes.values() if n.role != "Sink" and n.malicious)
+
+    def malicious_cap(self) -> int:
+        non_sink = sum(1 for n in self.nodes.values() if n.role != "Sink")
+        return max(1, round(non_sink * self.s.MAX_MALICIOUS_PCT))
+
+    def malicious_cap_reached(self) -> bool:
+        return self.malicious_count() >= self.malicious_cap()
 
     # ── user actions (mirrors frontend engine.js semantics) ──────────────────
     def inject_attack(self, uid: str, attack_type: str = "Blackhole") -> Node | None:
         n = self.nodes.get(uid)
         if not n or n.role == "Sink":
             return None
+        if not n.malicious and self.malicious_cap_reached():
+            return None  # containment cap — never let an attack spread to the whole network
         n.malicious = True
         n.attack = attack_type
         n.isolated = False
+        n.isolated_at = None
         # nudge trust just above threshold so the live drop is visible within a tick or two
         n.trust = round(max(self.s.TRUST_THRESHOLD + 0.22, min(n.trust, 0.8)), 3)
         return n
@@ -224,6 +276,7 @@ class WSNSimulator:
         if not n:
             return None
         n.isolated = True
+        n.isolated_at = time.time()
         n.trust = 0.1
         return n
 
@@ -231,6 +284,8 @@ class WSNSimulator:
         n = self.nodes.get(uid)
         if not n:
             return None
+        if n.isolated:
+            self._record_recovery(n, method="manual")
         n.isolated = False
         n.malicious = False
         n.attack = None
@@ -241,6 +296,8 @@ class WSNSimulator:
         cnt = 0
         for n in self.nodes.values():
             if n.malicious or n.isolated:
+                if n.isolated:
+                    self._record_recovery(n, method="manual")
                 n.malicious = False
                 n.attack = None
                 n.isolated = False

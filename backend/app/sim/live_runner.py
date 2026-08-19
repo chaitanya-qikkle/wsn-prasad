@@ -78,7 +78,7 @@ class LiveSimRunner:
     def step(self) -> list[dict]:
         self.tick += 1
 
-        if self.auto_attack and self.sim.rng.random() < 0.28:
+        if self.auto_attack and not self.sim.malicious_cap_reached() and self.sim.rng.random() < 0.28:
             clean = [n for n in self.sim.nodes.values()
                      if n.role != 'Sink' and not n.malicious and not n.isolated]
             if clean:
@@ -94,9 +94,10 @@ class LiveSimRunner:
 
         for h in self.sim.auto_healed:
             self.notifications.insert(0, {
-                'id': uuid.uuid4().hex, 'type': 'recovery',
+                'id': uuid.uuid4().hex, 'type': 'recovery', 'node_uid': h['node_uid'],
                 'title': f"{h['node_uid']} auto-healed",
-                'body': f"Trust recovered to {h['trust_after']} — automatically restored to the routing pool.",
+                'body': (f"Trust recovered to {h['trust_after']} — isolated for "
+                         f"{h['duration_sec']:.0f}s, now automatically restored to the routing pool."),
                 'read': False, 'created_at': _now_iso(),
             })
 
@@ -118,7 +119,7 @@ class LiveSimRunner:
     def notifications_from_detection(self, d: dict):
         is_iso = d['status'] == 'Isolated'
         self.notifications.insert(0, {
-            'id': uuid.uuid4().hex,
+            'id': uuid.uuid4().hex, 'node_uid': d['node_uid'],
             'type': 'isolation' if is_iso else 'attack',
             'title': f"{d['node_uid']} isolated" if is_iso else f"{d['attack_type']} detected on {d['node_uid']}",
             'body': (f"Trust fell to {d['trust_after']} — quarantined and routes reconfigured."
@@ -153,17 +154,26 @@ class LiveSimRunner:
         n = self.sim.inject_attack(uid, attack_type)
         if n:
             self.notifications.insert(0, {
-                'id': uuid.uuid4().hex, 'type': 'warning',
+                'id': uuid.uuid4().hex, 'type': 'warning', 'node_uid': uid,
                 'title': f'{attack_type} injected on {uid}',
                 'body': 'Watch the trust engine detect, isolate and seal it on-chain.',
                 'severity': SEVERITY.get(attack_type), 'read': False, 'created_at': _now_iso(),
+            })
+        elif self.sim.malicious_cap_reached() and self.sim.nodes.get(uid) and not self.sim.nodes[uid].malicious:
+            cap = self.sim.malicious_cap()
+            self.notifications.insert(0, {
+                'id': uuid.uuid4().hex, 'type': 'warning',
+                'title': 'Attack cap reached',
+                'body': (f'{self.sim.malicious_count()}/{cap} nodes already compromised — contain and '
+                         f'recover before adding more. The network refuses to let an incident spread further.'),
+                'read': False, 'created_at': _now_iso(),
             })
 
     def isolate(self, uid: str):
         n = self.sim.isolate_node(uid)
         if n:
             self.notifications.insert(0, {
-                'id': uuid.uuid4().hex, 'type': 'isolation', 'title': f'{uid} manually isolated',
+                'id': uuid.uuid4().hex, 'type': 'isolation', 'node_uid': uid, 'title': f'{uid} manually isolated',
                 'body': 'Operator quarantined the node.', 'read': False, 'created_at': _now_iso(),
             })
             self._rebuild_routes()
@@ -172,7 +182,7 @@ class LiveSimRunner:
         n = self.sim.restore_node(uid)
         if n:
             self.notifications.insert(0, {
-                'id': uuid.uuid4().hex, 'type': 'recovery', 'title': f'{uid} restored',
+                'id': uuid.uuid4().hex, 'type': 'recovery', 'node_uid': uid, 'title': f'{uid} restored',
                 'body': 'Node returned to the routing pool.', 'read': False, 'created_at': _now_iso(),
             })
             self._rebuild_routes()
@@ -256,6 +266,8 @@ class LiveSimRunner:
             'chainValid': self.chain_valid(),
             'metrics': self.sim.metrics(),
             'stats': self.stats(),
+            'recoveryEvents': list(self.sim.recovery_events)[-100:],
+            'maliciousCap': {'used': self.sim.malicious_count(), 'max': self.sim.malicious_cap()},
         }
 
     # ── broadcast ─────────────────────────────────────────────────────────

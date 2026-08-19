@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Box, Grid, Typography, Stack, Chip, useTheme, alpha, Divider } from '@mui/material';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-  ComposedChart, Bar, Line,
+  ComposedChart, Bar, Line, PieChart, Pie, Cell,
 } from 'recharts';
 import SensorsIcon      from '@mui/icons-material/Sensors';
 import GppMaybeIcon     from '@mui/icons-material/GppMaybe';
@@ -10,10 +10,11 @@ import BlockIcon        from '@mui/icons-material/Block';
 import ShieldMoonIcon   from '@mui/icons-material/ShieldMoon';
 import LinkIcon         from '@mui/icons-material/Link';
 import BoltIcon         from '@mui/icons-material/Bolt';
+import TimerIcon        from '@mui/icons-material/Timer';
 import { useSim } from '../sim/SimContext';
 import { ACCENT, ACCENT2, NEON, DANGER, WARN } from '../context/ThemeContext';
 import {
-  PageHeader, Panel, StatCard, Gauge, LiveDot, LegendDot, useChartTip, ATTACK_COLORS, popIn,
+  PageHeader, Panel, StatCard, Gauge, LiveDot, LegendDot, useChartTip, ATTACK_COLORS, popIn, zoneColor,
 } from '../utils/ui';
 
 export default function DashboardPage() {
@@ -37,6 +38,26 @@ export default function DashboardPage() {
   }, [sim.attacks]);
   const distTotal = dist.reduce((a, b) => a + b.value, 0) || 1;
 
+  const avgRecoverySec = useMemo(() => {
+    const evs = sim.recoveryEvents || [];
+    if (!evs.length) return null;
+    return evs.reduce((a, e) => a + e.duration_sec, 0) / evs.length;
+  }, [sim.recoveryEvents]);
+  const recoveryLabel = avgRecoverySec == null ? '—'
+    : avgRecoverySec >= 60 ? `${(avgRecoverySec / 60).toFixed(1)}m` : `${avgRecoverySec.toFixed(0)}s`;
+
+  const zoneHealth = useMemo(() => {
+    const byZone = {};
+    sim.nodes.forEach(n => {
+      if (!n.zone_label) return;
+      const z = (byZone[n.zone_label] ??= { label: n.zone_label, active: 0, isolated: 0, malicious: 0, total: 0 });
+      z.total += 1;
+      if (n.is_isolated) z.isolated += 1; else z.active += 1;
+      if (n.is_malicious && !n.is_isolated) z.malicious += 1;
+    });
+    return Object.values(byZone).sort((a, b) => a.label.localeCompare(b.label));
+  }, [sim.nodes]);
+
   return (
     <Box>
       <PageHeader icon={<SensorsIcon />} title="Security Analytics"
@@ -51,10 +72,11 @@ export default function DashboardPage() {
 
       {/* KPI ROW */}
       <Grid container spacing={2.5} mb={2.5}>
-        <Grid item xs={6} md={3}><StatCard icon={<SensorsIcon />} label="Total Nodes" value={s.totalNodes} color={ACCENT} sub={`${s.activeNodes} active`} spark={series.map(d => d.pdr)} /></Grid>
-        <Grid item xs={6} md={3}><StatCard icon={<BlockIcon />} label="Isolated" value={s.isolatedNodes} color={DANGER} sub="quarantined" /></Grid>
-        <Grid item xs={6} md={3}><StatCard icon={<GppMaybeIcon />} label="Detections" value={s.detections} color={WARN} sub="recorded on-chain" spark={series.map(d => d.overhead)} /></Grid>
-        <Grid item xs={6} md={3}><StatCard icon={<LinkIcon />} label="Chain Height" value={s.blockHeight} color={NEON} sub={sim.chainValid ? 'chain verified' : 'integrity broken'} /></Grid>
+        <Grid item xs={6} md={2.4}><StatCard icon={<SensorsIcon />} label="Total Nodes" value={s.totalNodes} color={ACCENT} sub={`${s.activeNodes} active`} spark={series.map(d => d.pdr)} /></Grid>
+        <Grid item xs={6} md={2.4}><StatCard icon={<BlockIcon />} label="Isolated" value={s.isolatedNodes} color={DANGER} sub="quarantined" /></Grid>
+        <Grid item xs={6} md={2.4}><StatCard icon={<GppMaybeIcon />} label="Detections" value={s.detections} color={WARN} sub="recorded on-chain" spark={series.map(d => d.overhead)} /></Grid>
+        <Grid item xs={6} md={2.4}><StatCard icon={<LinkIcon />} label="Chain Height" value={s.blockHeight} color={NEON} sub={sim.chainValid ? 'chain verified' : 'integrity broken'} /></Grid>
+        <Grid item xs={6} md={2.4}><StatCard icon={<TimerIcon />} label="Avg Recovery" value={recoveryLabel} color={ACCENT2} sub={`${(sim.recoveryEvents || []).length} recovered`} /></Grid>
       </Grid>
 
       {/* HERO: health gauge + live feed */}
@@ -138,26 +160,41 @@ export default function DashboardPage() {
 
         <Grid item xs={12} lg={4}>
           <Panel title="Attack Distribution" sx={{ height: '100%' }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 280 }}>
-              {dist.length === 0
-                ? <Typography variant="body2" color="text.secondary" textAlign="center">No attacks recorded yet.</Typography>
-                : <Stack spacing={2.2}>
-                    {dist.map(d => {
-                      const pct = (d.value / distTotal) * 100;
-                      return (
-                        <Box key={d.name}>
-                          <Stack direction="row" justifyContent="space-between" mb={0.6}>
-                            <Typography variant="body2" fontWeight={600}>{d.name}</Typography>
-                            <Typography variant="body2" color="text.secondary" fontFamily="'JetBrains Mono', monospace">{d.value} · {pct.toFixed(0)}%</Typography>
-                          </Stack>
-                          <Box sx={{ height: 8, borderRadius: 999, background: alpha(d.color, 0.12), overflow: 'hidden' }}>
-                            <Box sx={{ height: '100%', width: `${pct}%`, background: d.color, boxShadow: `0 0 10px ${alpha(d.color, 0.8)}`, transition: 'width .5s' }} />
-                          </Box>
-                        </Box>
-                      );
-                    })}
-                  </Stack>}
-            </Box>
+            {dist.length === 0
+              ? <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 280 }}>
+                  <Typography variant="body2" color="text.secondary" textAlign="center">No attacks recorded yet.</Typography>
+                </Box>
+              : <>
+                  <Box sx={{ position: 'relative', height: 180 }}>
+                    <ResponsiveContainer>
+                      <PieChart>
+                        <Pie data={dist} dataKey="value" nameKey="name" innerRadius={54} outerRadius={78}
+                          paddingAngle={2} isAnimationActive={false}>
+                          {dist.map(d => <Cell key={d.name} fill={d.color} stroke="none" />)}
+                        </Pie>
+                        <RTooltip contentStyle={tip} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                      <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, fontSize: 26, lineHeight: 1 }}>{distTotal}</Typography>
+                      <Typography variant="caption" color="text.secondary">detections</Typography>
+                    </Box>
+                  </Box>
+                  <Stack spacing={1} mt={1}>
+                    {dist.map(d => (
+                      <Stack key={d.name} direction="row" justifyContent="space-between" alignItems="center">
+                        <Stack direction="row" spacing={0.8} alignItems="center">
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: d.color, boxShadow: `0 0 6px ${d.color}` }} />
+                          <Typography variant="body2" fontWeight={600}>{d.name}</Typography>
+                        </Stack>
+                        <Typography variant="body2" color="text.secondary" fontFamily="'JetBrains Mono', monospace">
+                          {d.value} · {((d.value / distTotal) * 100).toFixed(0)}%
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                </>}
           </Panel>
         </Grid>
 
@@ -195,6 +232,37 @@ export default function DashboardPage() {
                 </AreaChart>
               </ResponsiveContainer>
             </Box>
+          </Panel>
+        </Grid>
+
+        <Grid item xs={12}>
+          <Panel title="Zone Health" action={<Typography variant="caption" color="text.secondary">active · isolated · malicious, per area</Typography>}>
+            {zoneHealth.length === 0
+              ? <Typography variant="body2" color="text.secondary">No zones yet — reset the network to seed one.</Typography>
+              : <Grid container spacing={2}>
+                  {zoneHealth.map(z => {
+                    const c = zoneColor(z.label);
+                    return (
+                      <Grid item xs={12} sm={6} md={4} lg={3} key={z.label}>
+                        <Box sx={{ p: 1.6, borderRadius: 2.5, border: `1px solid ${alpha(c, 0.25)}`, background: alpha(c, 0.06) }}>
+                          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.8}>
+                            <Typography variant="body2" fontWeight={800} sx={{ color: c }}>{z.label}</Typography>
+                            <Typography variant="caption" color="text.secondary">{z.total} nodes</Typography>
+                          </Stack>
+                          <Box sx={{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', bgcolor: alpha(c, 0.1) }}>
+                            <Box sx={{ width: `${(z.active / z.total) * 100}%`, background: ACCENT2 }} />
+                            <Box sx={{ width: `${(z.isolated / z.total) * 100}%`, background: DANGER }} />
+                          </Box>
+                          <Stack direction="row" spacing={1.5} mt={1}>
+                            <Typography variant="caption" color="text.secondary">{z.active} active</Typography>
+                            <Typography variant="caption" sx={{ color: DANGER }}>{z.isolated} isolated</Typography>
+                            {z.malicious > 0 && <Typography variant="caption" sx={{ color: WARN }}>{z.malicious} under attack</Typography>}
+                          </Stack>
+                        </Box>
+                      </Grid>
+                    );
+                  })}
+                </Grid>}
           </Panel>
         </Grid>
       </Grid>
