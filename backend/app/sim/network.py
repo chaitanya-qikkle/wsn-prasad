@@ -5,17 +5,32 @@ malicious and mount blackhole / Sybil / wormhole / grayhole behaviour.
 A behaviour-based trust engine penalises nodes for packet drops, delay
 anomalies and identity anomalies; nodes below the threshold are isolated and
 routes are rebuilt to avoid them. Each detection seals an event-driven block.
+
+Isolation is not the end of the story: quarantined nodes are automatically
+remediated by the trust engine and readmitted once their trust proves itself
+again, and every stage of that lifecycle is timed so the proposed system can
+be compared against the "existing system" baseline (no trust engine, no
+automatic recovery).
 """
 import random
 import math
 import time
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import dataclass
 
 from .blockchain import Blockchain
 from ..core.config import get_settings
 
 ATTACKS = ["Blackhole", "Sybil", "Wormhole", "Grayhole"]
 SEVERITY = {"Blackhole": "Critical", "Sybil": "High", "Wormhole": "Critical", "Grayhole": "Medium"}
+
+# Node lifecycle phases, in order. Drives the UI's recovery timeline.
+PHASE_ACTIVE      = "Active"
+PHASE_COMPROMISED = "Compromised"
+PHASE_DETECTED    = "Detected"
+PHASE_ISOLATED    = "Isolated"
+PHASE_REMEDIATING = "Remediating"
+PHASE_RECOVERED   = "Recovered"
 
 
 @dataclass
@@ -34,8 +49,26 @@ class Node:
     delay: float = 0.0
     zone: str = ""
     zone_label: str = ""
-    isolated_at: float | None = None
     partner: str | None = None  # colluding node uid — Wormhole is a two-node tunnel attack
+    # ── recovery lifecycle ────────────────────────────────────────────────
+    phase: str = PHASE_ACTIVE
+    attack_started_at: float | None = None
+    detected_at: float | None = None
+    isolated_at: float | None = None
+    remediated_at: float | None = None
+    recovered_at: float | None = None
+    quarantine_ticks: int = 0
+    last_attack: str | None = None   # survives remediation, for "recovered from X" labels
+    episode_id: str | None = None
+
+    def clear_lifecycle(self):
+        self.phase = PHASE_ACTIVE
+        self.attack_started_at = None
+        self.detected_at = None
+        self.isolated_at = None
+        self.remediated_at = None
+        self.quarantine_ticks = 0
+        self.episode_id = None
 
 
 class WSNSimulator:
@@ -45,10 +78,20 @@ class WSNSimulator:
         self.chain = Blockchain(difficulty=self.s.BLOCK_DIFFICULTY)
         self.nodes: dict[str, Node] = {}
         self.detections: list[dict] = []
-        self.auto_healed: list[dict] = []
+        self.auto_healed: list[dict] = []       # readmitted to routing this round
+        self.auto_remediated: list[dict] = []   # attack payload scrubbed this round
         self.recovery_events: list[dict] = []
+        self.episodes: list[dict] = []          # one per attack, open or closed — the timeline
+        self._open: dict[str, dict] = {}        # node_uid -> its currently-open episode
         self.round_history: list[tuple[int, int]] = []  # recent (forwarded, dropped) per round — for a PDR that actually reacts
+        self.baseline_mode = False  # "existing system" — no trust engine, nothing gets isolated
+        self.round_no = 0
+        self._metrics_cache: dict | None = None
+        self._metrics_round = -1
         self._build(n_nodes, n_malicious)
+
+    def set_baseline_mode(self, on: bool):
+        self.baseline_mode = bool(on)
 
     def _build(self, n, m):
         roles = ["Sink"] + ["Cluster Head"] * 3 + ["Relay"] * 4 + ["Gateway"]
@@ -67,9 +110,11 @@ class WSNSimulator:
                 attack=self.rng.choice(ATTACKS) if mal else None,
             )
         self._assign_zones()
-        for n in self.nodes.values():
-            if n.malicious and n.attack == "Wormhole":
-                n.partner = self._pick_wormhole_partner(n)
+        for nd in self.nodes.values():
+            if nd.malicious:
+                if nd.attack == "Wormhole":
+                    nd.partner = self._pick_wormhole_partner(nd)
+                self._open_episode(nd)
 
     def _pick_wormhole_partner(self, n: Node) -> str | None:
         """Wormhole is a two-node tunnel — pick the nearest other node to
@@ -96,13 +141,79 @@ class WSNSimulator:
             n.zone = nearest.zone
             n.zone_label = nearest.zone_label
 
+    # ── attack episodes (the "how long did it take" record) ─────────────────
+    def _open_episode(self, n: Node) -> dict:
+        """Start timing a fresh attack on this node. One episode spans
+        injection → detection → isolation → remediation → readmission, so the
+        UI can show both the total attack duration and each stage's cost."""
+        attack = n.attack or n.last_attack or "Manual Isolation"
+        ep = {
+            "id": uuid.uuid4().hex,
+            "node_uid": n.uid,
+            "attack_type": attack,
+            "severity": SEVERITY.get(attack, "Medium"),
+            "zone_label": n.zone_label,
+            "mode": "existing" if self.baseline_mode else "proposed",
+            "status": PHASE_COMPROMISED,
+            "started_at": time.time(),
+            "detected_at": None, "isolated_at": None,
+            "remediated_at": None, "recovered_at": None,
+            "detect_sec": None, "isolate_sec": None,
+            "remediate_sec": None, "recover_sec": None, "total_sec": None,
+        }
+        n.phase = PHASE_COMPROMISED
+        n.attack_started_at = ep["started_at"]
+        n.last_attack = attack
+        n.episode_id = ep["id"]
+        self.episodes.append(ep)
+        self._open[n.uid] = ep
+        return ep
+
+    def _stamp(self, n: Node, stage: str):
+        """Record a lifecycle transition on the node's open episode."""
+        ep = self._open.get(n.uid)
+        if not ep:
+            return
+        now = time.time()
+        start = ep["started_at"]
+        if stage == "detected" and ep["detected_at"] is None:
+            ep["detected_at"] = now
+            ep["detect_sec"] = round(now - start, 1)
+            ep["status"] = PHASE_DETECTED
+            n.detected_at = now
+        elif stage == "isolated" and ep["isolated_at"] is None:
+            ep["isolated_at"] = now
+            ep["isolate_sec"] = round(now - start, 1)
+            ep["status"] = PHASE_ISOLATED
+        elif stage == "remediated" and ep["remediated_at"] is None:
+            ep["remediated_at"] = now
+            ep["remediate_sec"] = round(now - (ep["isolated_at"] or start), 1)
+            ep["status"] = PHASE_REMEDIATING
+        elif stage == "recovered" and ep["recovered_at"] is None:
+            ep["recovered_at"] = now
+            # recovery time = how long the node was out of the routing pool
+            ep["recover_sec"] = round(now - (ep["isolated_at"] or start), 1)
+            ep["total_sec"] = round(now - start, 1)
+            ep["status"] = PHASE_RECOVERED
+            self._open.pop(n.uid, None)
+
+    def open_attack_seconds(self) -> float:
+        """Longest currently-unresolved attack, in seconds — the live
+        'this network has been under attack for N s' counter."""
+        if not self._open:
+            return 0.0
+        now = time.time()
+        return round(max(now - ep["started_at"] for ep in self._open.values()), 1)
+
     # ── trust engine ────────────────────────────────────────────────────────
     ROUND_WINDOW = 6  # rounds kept for the live PDR window
 
     def evaluate_trust(self) -> list[dict]:
         """One evaluation round. Returns detections produced this round."""
+        self.round_no += 1
         new_detections = []
         self.auto_healed = []
+        self.auto_remediated = []
         round_fwd = 0
         round_drop = 0
         for n in self.nodes.values():
@@ -155,43 +266,107 @@ class WSNSimulator:
             self.detections.extend(new_detections)
         return new_detections
 
+    # ── automatic recovery ──────────────────────────────────────────────────
+    def readmit_trust(self) -> float:
+        """Trust a quarantined node must reach to rejoin the routing pool."""
+        return round(min(1.0, self.s.TRUST_THRESHOLD + self.s.READMIT_MARGIN), 3)
+
     def _probation_tick(self, n: Node):
-        """Isolated nodes are excluded from routing/traffic, but if their
-        attack has genuinely stopped (malicious cleared — by the operator
-        or auto-attack toggling off) their trust is allowed to recover
-        slowly. Only once trust proves itself back above the threshold is
-        the node let back into the routing pool — never on a timer alone,
-        so a still-malicious node can never talk its way back in."""
+        """The automatic-recovery pipeline, one tick at a time.
+
+        An isolated node is out of the routing pool, so it can do no further
+        harm. From there the trust engine runs recovery in two stages:
+
+          1. Quarantine + remediation. After QUARANTINE_TICKS rounds of
+             isolation the node's compromised behaviour is scrubbed (attack
+             cleared, wormhole tunnel torn down). This is what makes recovery
+             *automatic* — no operator action is required.
+          2. Probation. Trust rebuilds a little each round. Only once it
+             proves itself back above the threshold is the node readmitted —
+             never on a timer alone, so a node that is still misbehaving can
+             never talk its way back in.
+
+        In baseline ("existing system") mode neither stage runs: an attack
+        there stays live until a human intervenes, which is exactly the gap
+        the comparison is meant to show.
+        """
+        n.quarantine_ticks += 1
+
         if n.malicious:
-            return  # still actively attacking — no recovery, ever
+            if self.baseline_mode or not self.s.AUTO_RECOVERY:
+                return  # existing system — no self-healing, ever
+            if n.quarantine_ticks < self.s.QUARANTINE_TICKS:
+                return  # still being scrubbed
+            cleared = n.attack
+            n.malicious = False
+            n.attack = None
+            n.partner = None
+            n.remediated_at = time.time()
+            n.phase = PHASE_REMEDIATING
+            self._stamp(n, "remediated")
+            self.auto_remediated.append({
+                "node_uid": n.uid, "attack_type": cleared, "zone_label": n.zone_label,
+                "quarantine_sec": round(time.time() - (n.isolated_at or time.time()), 1),
+            })
+            return
+
+        # probation — rebuild trust until it clears the readmission bar. That
+        # bar sits above the isolation threshold on purpose: readmitting a node
+        # at exactly the threshold puts it one bad round away from being
+        # quarantined again, which shows up as a node flapping in and out of
+        # service instead of recovering.
         trust_before = n.trust
-        n.trust = round(min(1.0, n.trust + 0.015), 3)
-        if n.trust >= self.s.TRUST_THRESHOLD:
+        n.trust = round(min(1.0, n.trust + self.s.TRUST_REBUILD_RATE), 3)
+        if n.trust >= self.readmit_trust():
             n.isolated = False
+            n.phase = PHASE_RECOVERED
+            n.recovered_at = time.time()
             duration = (time.time() - n.isolated_at) if n.isolated_at else 0.0
             self.auto_healed.append({
                 "node_uid": n.uid, "trust_before": trust_before, "trust_after": n.trust,
-                "duration_sec": round(duration, 1),
+                "duration_sec": round(duration, 1), "attack_type": n.last_attack,
             })
             self._record_recovery(n, method="auto")
 
     def _record_recovery(self, n: Node, method: str):
         """Log how long a node stayed isolated before this recovery."""
-        duration = (time.time() - n.isolated_at) if n.isolated_at else 0.0
+        now = time.time()
+        duration = (now - n.isolated_at) if n.isolated_at else 0.0
+        ep = self._open.get(n.uid)
+        self._stamp(n, "recovered")
         self.recovery_events.append({
-            "node_uid": n.uid, "attack_type": n.attack, "zone_label": n.zone_label,
+            "node_uid": n.uid, "attack_type": n.last_attack, "zone_label": n.zone_label,
             "method": method, "duration_sec": round(duration, 1),
-            "recovered_at": time.time(),
+            "total_sec": (ep or {}).get("total_sec"),
+            "detect_sec": (ep or {}).get("detect_sec"),
+            "recovered_at": now,
         })
         n.isolated_at = None
+        n.quarantine_ticks = 0
+        n.recovered_at = now
+        n.phase = PHASE_RECOVERED
 
     def _make_detection(self, n: Node, trust_before, drop_ratio, delay_anom, identity) -> dict:
         attack = n.attack or "Grayhole"
-        # isolate if below threshold
-        if n.trust < self.s.TRUST_THRESHOLD:
+        # A benign node can also decay below the threshold. Time that episode
+        # too, so every period a node spends out of service is accounted for.
+        if n.uid not in self._open:
+            self._open_episode(n)
+        self._stamp(n, "detected")
+        if n.phase in (PHASE_ACTIVE, PHASE_COMPROMISED):
+            n.phase = PHASE_DETECTED
+        if self.baseline_mode:
+            # "existing system" — the anomaly is visible but nothing acts on
+            # it: no trust engine means no automatic isolation, no recovery,
+            # no rerouting. This is the honest baseline for the comparison.
+            status, mitigation = "Detected", "No automatic defense — existing system has no trust engine"
+        elif n.trust < self.s.TRUST_THRESHOLD:
             n.isolated = True
             n.isolated_at = time.time()
-            status, mitigation = "Isolated", "Node isolated; routes reconfigured"
+            n.quarantine_ticks = 0
+            n.phase = PHASE_ISOLATED
+            self._stamp(n, "isolated")
+            status, mitigation = "Isolated", "Node isolated; routes reconfigured; automatic recovery started"
         else:
             status, mitigation = "Detected", "Trust penalized; monitored"
         return {
@@ -242,15 +417,29 @@ class WSNSimulator:
 
     # ── metrics ─────────────────────────────────────────────────────────────
     def metrics(self) -> dict:
+        """Cached for the current round.
+
+        metrics() is read several times per tick (stats, history snapshot,
+        the WS payload). Some fields are sampled from the RNG, so recomputing
+        would hand each caller a *different* number for the same instant —
+        which is exactly how the dashboard ends up disagreeing with the
+        sidebar. One value per round, shared by every reader.
+        """
+        if self._metrics_cache is not None and self._metrics_round == self.round_no:
+            return self._metrics_cache
+
         active = [n for n in self.nodes.values() if not n.isolated]
         # PDR reacts to the last few rounds only, not the whole run's history —
         # otherwise a long-running demo makes new attacks/recoveries invisible
         # because they get diluted into an ever-growing all-time average.
         window_fwd = sum(f for f, _ in self.round_history)
         window_drop = sum(d for _, d in self.round_history)
-        pdr = 100.0 * window_fwd / max(1, window_fwd + window_drop)
+        total = window_fwd + window_drop
+        # A network that has not forwarded anything yet has not dropped
+        # anything either — report a clean 100%, not 0%, before the first round.
+        pdr = 100.0 if total == 0 else 100.0 * window_fwd / total
         mal_active = sum(1 for n in self.nodes.values() if n.malicious and not n.isolated)
-        return {
+        m = {
             "pdr": round(pdr, 1),
             "avg_delay": round(self.rng.uniform(12, 40) - mal_active, 1),
             "throughput": round(180 + len(active) * 5 + self.rng.uniform(0, 40), 1),
@@ -260,6 +449,9 @@ class WSNSimulator:
             # overhead is low & only rises with detection activity (event-driven)
             "overhead": round(2.0 + len(self.detections) * 0.05, 2),
         }
+        self._metrics_cache = m
+        self._metrics_round = self.round_no
+        return m
 
     def topology(self) -> list[dict]:
         return [{
@@ -270,7 +462,37 @@ class WSNSimulator:
             "packets_fwd": n.fwd, "packets_drop": n.drop, "avg_delay": round(n.delay, 1),
             "zone": n.zone, "zone_label": n.zone_label,
             "attack": n.attack, "partner": n.partner if n.attack == "Wormhole" else None,
+            "phase": n.phase, "last_attack": n.last_attack,
+            "recovering": n.isolated and not n.malicious,
+            "quarantine_ticks": n.quarantine_ticks,
+            "recovered_at": n.recovered_at,
         } for n in self.nodes.values()]
+
+    def recovery_summary(self) -> dict:
+        """Aggregate timings, split by system — this is the guide's
+        'existing vs proposed' comparison, measured rather than claimed."""
+        done = [e for e in self.episodes if e["status"] == PHASE_RECOVERED and e["total_sec"] is not None]
+        prop = [e for e in done if e["mode"] == "proposed"]
+        detected = [e for e in self.episodes if e["detect_sec"] is not None]
+
+        def avg(vals):
+            vals = [v for v in vals if v is not None]
+            return round(sum(vals) / len(vals), 1) if vals else None
+
+        return {
+            "totalEpisodes": len(self.episodes),
+            "recovered": len(done),
+            "unresolved": len(self._open),
+            "avgDetectSec": avg([e["detect_sec"] for e in detected]),
+            "avgIsolateSec": avg([e["isolate_sec"] for e in self.episodes]),
+            "avgRecoverSec": avg([e["recover_sec"] for e in prop]),
+            "avgTotalSec": avg([e["total_sec"] for e in prop]),
+            "worstTotalSec": max([e["total_sec"] for e in prop], default=None),
+            "bestTotalSec": min([e["total_sec"] for e in prop], default=None),
+            "openSec": self.open_attack_seconds(),
+            "autoRecoveries": sum(1 for e in self.recovery_events if e["method"] == "auto"),
+            "manualRecoveries": sum(1 for e in self.recovery_events if e["method"] == "manual"),
+        }
 
     # ── attack containment cap ────────────────────────────────────────────────
     def malicious_count(self) -> int:
@@ -294,9 +516,12 @@ class WSNSimulator:
         n.attack = attack_type
         n.isolated = False
         n.isolated_at = None
+        n.recovered_at = None
+        n.quarantine_ticks = 0
         n.partner = self._pick_wormhole_partner(n) if attack_type == "Wormhole" else None
         # nudge trust just above threshold so the live drop is visible within a tick or two
         n.trust = round(max(self.s.TRUST_THRESHOLD + 0.22, min(n.trust, 0.8)), 3)
+        self._open_episode(n)
         return n
 
     def isolate_node(self, uid: str) -> Node | None:
@@ -305,32 +530,35 @@ class WSNSimulator:
             return None
         n.isolated = True
         n.isolated_at = time.time()
+        n.quarantine_ticks = 0
+        n.phase = PHASE_ISOLATED
         n.trust = 0.1
+        if n.uid not in self._open:
+            self._open_episode(n)
+        self._stamp(n, "isolated")
         return n
 
     def restore_node(self, uid: str) -> Node | None:
         n = self.nodes.get(uid)
         if not n:
             return None
-        if n.isolated:
-            self._record_recovery(n, method="manual")
+        if n.attack:
+            n.last_attack = n.attack
         n.isolated = False
         n.malicious = False
         n.attack = None
         n.partner = None
         n.trust = 0.85
+        if n.uid in self._open:
+            self._record_recovery(n, method="manual")
+        else:
+            n.clear_lifecycle()
         return n
 
     def recover_all(self) -> int:
         cnt = 0
-        for n in self.nodes.values():
+        for n in list(self.nodes.values()):
             if n.malicious or n.isolated:
-                if n.isolated:
-                    self._record_recovery(n, method="manual")
-                n.malicious = False
-                n.attack = None
-                n.partner = None
-                n.isolated = False
-                n.trust = 0.85
+                self.restore_node(n.uid)
                 cnt += 1
         return cnt

@@ -38,9 +38,18 @@ class LiveSimRunner:
         self.routes: list[dict] = []
         self.clients: set = set()
         self._task: asyncio.Task | None = None
+        # Before / during / after network states, captured automatically as the
+        # incident unfolds. Held on the server so the comparison survives a
+        # page refresh and is identical for every connected client.
+        self.phase_snapshots: dict[str, dict | None] = {'before': None, 'during': None, 'after': None}
+        self._prev_topology: list[dict] = []
+        self._prev_pdr: float = 0.0
+        self._prev_malicious: int = 0
+        self._incident_open: bool = False
         self._rebuild_routes()
         self._snap_metrics()
         self._snap_trust()
+        self._capture_phases()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     def start_task(self):
@@ -70,9 +79,15 @@ class LiveSimRunner:
         self.trust_hist = []
         self.metrics_hist = []
         self.tick = 0
+        self.phase_snapshots = {'before': None, 'during': None, 'after': None}
+        self._prev_topology = []
+        self._prev_pdr = 0.0
+        self._prev_malicious = 0
+        self._incident_open = False
         self._rebuild_routes()
         self._snap_metrics()
         self._snap_trust()
+        self._capture_phases()
 
     # ── one simulation round ──────────────────────────────────────────────
     def step(self) -> list[dict]:
@@ -92,22 +107,91 @@ class LiveSimRunner:
                 d['timestamp'] = _now_iso()
                 self.notifications_from_detection(d)
 
+        for r in self.sim.auto_remediated:
+            self.notifications.insert(0, {
+                'id': uuid.uuid4().hex, 'type': 'recovery', 'node_uid': r['node_uid'],
+                'title': f"{r['node_uid']} remediated automatically",
+                'body': (f"{r['attack_type']} behaviour scrubbed after {r['quarantine_sec']:.0f}s in "
+                         f"quarantine. The node is now on probation — it rejoins routing only once "
+                         f"its trust climbs back above the threshold."),
+                'read': False, 'created_at': _now_iso(),
+            })
+
         for h in self.sim.auto_healed:
             self.notifications.insert(0, {
                 'id': uuid.uuid4().hex, 'type': 'recovery', 'node_uid': h['node_uid'],
-                'title': f"{h['node_uid']} auto-healed",
-                'body': (f"Trust recovered to {h['trust_after']} — isolated for "
+                'title': f"{h['node_uid']} recovered",
+                'body': (f"Trust recovered to {h['trust_after']} — out of service for "
                          f"{h['duration_sec']:.0f}s, now automatically restored to the routing pool."),
                 'read': False, 'created_at': _now_iso(),
             })
 
-        if detections or self.sim.auto_healed:
+        if detections or self.sim.auto_healed or self.sim.auto_remediated:
             self.notifications = (self.notifications)[:200]
 
         self._rebuild_routes()
         self._snap_metrics()
         self._snap_trust()
+        self._capture_phases()
         return detections
+
+    # ── before / during / after capture ───────────────────────────────────
+    def _capture_phases(self):
+        """Freeze the network the moment it changes incident phase.
+
+        'before' is the last clean topology seen *prior* to the first active
+        attack — so it genuinely shows the network before the attack, not one
+        tick into it. 'during' tracks the worst point of the incident, and
+        'after' is taken once every node is back in service. Together they are
+        the before / under-attack / recovered comparison on the dashboard.
+        """
+        topo = self.sim.topology()
+        mal = sum(1 for n in topo if n['is_malicious'] and not n['is_isolated'])
+        iso = sum(1 for n in topo if n['is_isolated'])
+        m = self.sim.metrics()
+
+        def snap(nodes, pdr, tick, **kw):
+            return {'nodes': [dict(n) for n in nodes], 'pdr': pdr, 'tick': tick,
+                    'captured_at': time.time(),
+                    'malicious': sum(1 for n in nodes if n['is_malicious'] and not n['is_isolated']),
+                    'isolated': sum(1 for n in nodes if n['is_isolated']), **kw}
+
+        disrupted = mal + iso  # nodes either attacking or out of service
+
+        if disrupted > 0 and not self._incident_open:
+            # incident starts — the *previous* tick is the clean "before", so
+            # the comparison shows the network before the attack rather than
+            # one round into it
+            self._incident_open = True
+            if self._prev_topology:
+                self.phase_snapshots['before'] = snap(self._prev_topology, self._prev_pdr,
+                                                      max(0, self.tick - 1))
+            self.phase_snapshots['during'] = None
+            self.phase_snapshots['after'] = None
+
+        if self._incident_open:
+            during = self.phase_snapshots.get('during')
+            # keep the worst moment of the incident, not just its first tick.
+            # Strictly greater, so a tie keeps the *earliest* worst moment —
+            # the one where attackers are still live rather than already
+            # quarantined, which is the more honest "under attack" picture.
+            if not during or disrupted > during['malicious'] + during['isolated']:
+                self.phase_snapshots['during'] = snap(topo, m['pdr'], self.tick)
+                during = self.phase_snapshots['during']
+            # The map is frozen at the moment the attack was most widespread,
+            # but delivery only degrades over the rounds that follow it. Pairing
+            # that topology with its capture-instant PDR would show a flat line
+            # across before/during/after, so the figure tracks the worst
+            # delivery seen at any point in the incident instead.
+            during['pdr'] = min(during['pdr'], m['pdr'])
+            if disrupted == 0:
+                # every attacker is remediated and nothing is left quarantined
+                self._incident_open = False
+                self.phase_snapshots['after'] = snap(topo, m['pdr'], self.tick)
+
+        self._prev_topology = topo
+        self._prev_pdr = m['pdr']
+        self._prev_malicious = mal
 
     def _route_sources(self):
         return [n.uid for n in self.sim.nodes.values()
@@ -133,9 +217,16 @@ class LiveSimRunner:
     # ── history buffers ───────────────────────────────────────────────────
     def _snap_metrics(self):
         m = self.sim.metrics()
-        point = {'time': datetime.now().strftime('%H:%M:%S'), 'pdr': m['pdr'], 'delay': m['avg_delay'],
+        nodes = self.sim.nodes.values()
+        isolated = sum(1 for n in nodes if n.isolated)
+        recovering = sum(1 for n in nodes if n.isolated and not n.malicious)
+        point = {'time': datetime.now().strftime('%H:%M:%S'), 'tick': self.tick,
+                 'pdr': m['pdr'], 'delay': m['avg_delay'],
                  'throughput': m['throughput'], 'energy': m['energy_avg'], 'overhead': m['overhead'],
-                 'malicious': m['malicious_active']}
+                 'malicious': m['malicious_active'], 'isolated': isolated, 'recovering': recovering,
+                 # lets the charts shade the window where the network was actually
+                 # under attack, instead of leaving the reader to guess
+                 'underAttack': 1 if m['malicious_active'] > 0 else 0}
         self.metrics_hist.append(point)
         if len(self.metrics_hist) > HISTORY:
             self.metrics_hist.pop(0)
@@ -153,10 +244,15 @@ class LiveSimRunner:
     def inject(self, uid: str, attack_type: str = 'Blackhole'):
         n = self.sim.inject_attack(uid, attack_type)
         if n:
+            # Capture here, not on the next tick. The trust engine detects and
+            # quarantines within a single evaluation round, so by the end of the
+            # next step() there is nothing left "attacking" to photograph — the
+            # under-attack comparison would show an already-contained network.
+            self._capture_phases()
             self.notifications.insert(0, {
                 'id': uuid.uuid4().hex, 'type': 'warning', 'node_uid': uid,
                 'title': f'{attack_type} injected on {uid}',
-                'body': 'Watch the trust engine detect, isolate and seal it on-chain.',
+                'body': 'Watch the trust engine detect, isolate, seal it on-chain and heal the node.',
                 'severity': SEVERITY.get(attack_type), 'read': False, 'created_at': _now_iso(),
             })
         elif self.sim.malicious_cap_reached() and self.sim.nodes.get(uid) and not self.sim.nodes[uid].malicious:
@@ -177,6 +273,7 @@ class LiveSimRunner:
                 'body': 'Operator quarantined the node.', 'read': False, 'created_at': _now_iso(),
             })
             self._rebuild_routes()
+            self._capture_phases()
 
     def restore(self, uid: str):
         n = self.sim.restore_node(uid)
@@ -186,6 +283,7 @@ class LiveSimRunner:
                 'body': 'Node returned to the routing pool.', 'read': False, 'created_at': _now_iso(),
             })
             self._rebuild_routes()
+            self._capture_phases()
 
     def recover_all(self):
         cnt = self.sim.recover_all()
@@ -194,6 +292,7 @@ class LiveSimRunner:
             'body': 'All malicious / isolated nodes returned to service.', 'read': False, 'created_at': _now_iso(),
         })
         self._rebuild_routes()
+        self._capture_phases()
 
     def play(self):
         self.running = True
@@ -209,6 +308,23 @@ class LiveSimRunner:
 
     def set_auto_attack(self, on: bool):
         self.auto_attack = bool(on)
+
+    def set_baseline_mode(self, on: bool):
+        self.sim.set_baseline_mode(on)
+        self.notifications.insert(0, {
+            'id': uuid.uuid4().hex, 'type': 'info',
+            'title': 'Existing System (no trust engine)' if on else 'Proposed System (trust engine)',
+            'body': ('Switched to the baseline — detections are logged but nothing is isolated or remediated '
+                     'automatically, so PDR stays degraded until an operator steps in.') if on else
+                     'Switched back — the trust engine will isolate, remediate and readmit nodes on its own again.',
+            'read': False, 'created_at': _now_iso(),
+        })
+
+    def clear_phases(self):
+        """Drop the before/during/after capture so the next attack starts a
+        fresh comparison — used by the dashboard's 'new comparison' button."""
+        self.phase_snapshots = {'before': None, 'during': None, 'after': None}
+        self._incident_open = False
 
     def mark_read(self, notif_id: str):
         for n in self.notifications:
@@ -241,12 +357,17 @@ class LiveSimRunner:
             'isolatedNodes': sum(1 for n in nodes if n.isolated),
             'maliciousActive': sum(1 for n in nodes if n.malicious and not n.isolated),
             'maliciousNodes': sum(1 for n in nodes if n.malicious),
+            # quarantined but already scrubbed — actively healing, not a threat
+            'recoveringNodes': sum(1 for n in nodes if n.isolated and not n.malicious),
             'trusted': trusted, 'suspect': suspect, 'belowThreshold': below,
             'avgTrust': round(avg_trust, 3),
             'detections': len(self.sim.detections),
             'blockHeight': self.sim.chain.head.index,
             'reroutedPaths': sum(1 for r in self.routes if r.get('reconfigured')),
             'pdr': m['pdr'],
+            'delay': m['avg_delay'],
+            'throughput': m['throughput'],
+            'overhead': m['overhead'],
             'unread': sum(1 for n in self.notifications if not n['read']),
         }
 
@@ -268,6 +389,18 @@ class LiveSimRunner:
             'stats': self.stats(),
             'recoveryEvents': list(self.sim.recovery_events)[-100:],
             'maliciousCap': {'used': self.sim.malicious_count(), 'max': self.sim.malicious_cap()},
+            'baselineMode': self.sim.baseline_mode,
+            # ── recovery / timing telemetry ──
+            'attackTimeline': list(reversed(self.sim.episodes))[:60],
+            'recoverySummary': self.sim.recovery_summary(),
+            'phaseSnapshots': self.phase_snapshots,
+            'autoRecovery': {
+                'enabled': bool(self.s.AUTO_RECOVERY) and not self.sim.baseline_mode,
+                'quarantineTicks': self.s.QUARANTINE_TICKS,
+                'rebuildRate': self.s.TRUST_REBUILD_RATE,
+                'threshold': self.s.TRUST_THRESHOLD,
+                'intervalMs': self.interval_ms,
+            },
         }
 
     # ── broadcast ─────────────────────────────────────────────────────────

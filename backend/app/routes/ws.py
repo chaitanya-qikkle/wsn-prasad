@@ -17,6 +17,8 @@ ACTIONS = {
     'step': lambda r, args: r.step_once(),
     'setSpeed': lambda r, args: r.set_speed(*args),
     'setAutoAttack': lambda r, args: r.set_auto_attack(*args),
+    'setBaselineMode': lambda r, args: r.set_baseline_mode(*args),
+    'clearPhases': lambda r, args: r.clear_phases(),
     'markRead': lambda r, args: r.mark_read(*args),
     'markAllRead': lambda r, args: r.mark_all_read(),
     'dismiss': lambda r, args: r.dismiss(*args),

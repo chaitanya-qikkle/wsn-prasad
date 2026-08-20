@@ -24,7 +24,7 @@ import PlayArrowIcon      from '@mui/icons-material/PlayArrow';
 import PauseIcon          from '@mui/icons-material/Pause';
 import BoltIcon           from '@mui/icons-material/Bolt';
 import { useAuth }        from '../context/AuthContext';
-import { useThemeMode, ACCENT, ACCENT2, DANGER, WARN } from '../context/ThemeContext';
+import { useThemeMode, ACCENT, ACCENT2, DANGER, WARN, NEON } from '../context/ThemeContext';
 import { useSim } from '../sim/SimContext';
 import { LiveDot } from '../utils/ui';
 
@@ -46,6 +46,8 @@ const NAV_SECTIONS = [
 ];
 
 const SPEEDS = [{ ms: 3500, l: '0.5x' }, { ms: 2000, l: '1x' }, { ms: 1000, l: '2x' }, { ms: 500, l: '4x' }];
+
+const TOAST_SEVERITY = { isolation: 'error', attack: 'warning', recovery: 'success', info: 'info' };
 
 export default function MainLayout() {
   const navigate = useNavigate();
@@ -73,7 +75,10 @@ export default function MainLayout() {
     }
     if (!latest || seenIds.current.has(latest.id)) return;
     seenIds.current.add(latest.id);
-    if (latest.type === 'attack' || latest.type === 'isolation' || latest.severity === 'Critical') {
+    // recoveries are toasted too: "did it actually recover?" is the question
+    // the console exists to answer, and burying the answer in a list is a
+    // worse answer than not showing it at all
+    if (['attack', 'isolation', 'recovery'].includes(latest.type) || latest.severity === 'Critical') {
       setToast(latest);
     }
   }, [sim.notifications]);
@@ -156,9 +161,12 @@ export default function MainLayout() {
       </Box>
 
       <Box sx={{ px: 1.5, pb: 1 }}>
-        <Stack direction="row" spacing={0.8}>
+        {/* Same fields, same rounding as every other surface — sim.stats is the
+            single source, so the sidebar can never disagree with the dashboard. */}
+        <Stack direction="row" spacing={0.7}>
           <MiniStat label="Nodes" value={sim.stats.totalNodes} color={ACCENT} />
           <MiniStat label="Threats" value={sim.stats.maliciousActive} color={DANGER} />
+          <MiniStat label="Healing" value={sim.stats.recoveringNodes} color={NEON} />
           <MiniStat label="PDR" value={`${Math.round(sim.stats.pdr)}%`} color={ACCENT2} />
         </Stack>
       </Box>
@@ -271,7 +279,7 @@ export default function MainLayout() {
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)}
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
-        <Alert severity={toast?.type === 'isolation' ? 'error' : 'warning'} variant="filled"
+        <Alert severity={TOAST_SEVERITY[toast?.type] || 'warning'} variant="filled"
           onClose={() => setToast(null)} sx={{ borderRadius: 3, cursor: 'pointer', maxWidth: 360 }}
           onClick={() => { if (toast?.node_uid) navigate('/topology', { state: { selectedNode: toast.node_uid } }); setToast(null); }}>
           <Typography variant="body2" fontWeight={700}>{toast?.title}</Typography>

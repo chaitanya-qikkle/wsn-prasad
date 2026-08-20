@@ -4,9 +4,6 @@ import {
   TextField, Alert, Snackbar, LinearProgress, Tooltip,
   Stepper, Step, StepLabel, StepContent,
 } from '@mui/material';
-import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-} from 'recharts';
 import ScienceIcon      from '@mui/icons-material/Science';
 import BugReportIcon    from '@mui/icons-material/BugReport';
 import RestartAltIcon   from '@mui/icons-material/RestartAlt';
@@ -17,23 +14,27 @@ import ShieldIcon       from '@mui/icons-material/Shield';
 import TrendingUpIcon   from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useSim } from '../sim/SimContext';
-import { PageHeader, Panel, LiveDot, useChartTip, ATTACK_COLORS, trustColor, popIn, pulse } from '../utils/ui';
+import {
+  PageHeader, Panel, LiveDot, ATTACK_COLORS, trustColor, popIn, pulse, formatDuration,
+} from '../utils/ui';
+import LiveChart from '../components/LiveChart';
 import { ACCENT, ACCENT2, NEON, DANGER, WARN } from '../context/ThemeContext';
 import { TRUST_THRESHOLD } from '../sim/constants';
 
 const ATTACKS = [
   { key: 'Blackhole', desc: 'Drops ~95% of packets — critical', color: ATTACK_COLORS.Blackhole,
     how: 'A blackhole node advertises itself as the best route, then silently drops almost every packet it should forward. The trust engine catches it through an extreme packet-drop ratio.' },
-  { key: 'Wormhole',  desc: 'Delay / topology anomaly', color: ATTACK_COLORS.Wormhole,
-    how: 'Two colluding nodes tunnel traffic between distant points, distorting the network topology and route timing. It is flagged by an abnormal end-to-end delay anomaly.' },
+  { key: 'Wormhole',  desc: 'Two-node tunnel — delay anomaly', color: ATTACK_COLORS.Wormhole,
+    how: 'Wormhole takes two nodes, not one: a colluding pair opens a private out-of-band tunnel and shuttles traffic between distant points, distorting the topology and route timing. The map draws the tunnel and the packets moving across it, and the engine flags the abnormal end-to-end delay.' },
   { key: 'Sybil',     desc: 'Fake identities — identity flag', color: ATTACK_COLORS.Sybil,
     how: 'A single node forges several fake identities to gain disproportionate influence over routing. The engine raises an identity-anomaly flag when it detects the spoofed IDs.' },
+  { key: 'Grayhole',  desc: 'Drops ~50% — selective, sneaky', color: ATTACK_COLORS.Grayhole,
+    how: 'A grayhole forwards enough traffic to look healthy while quietly discarding about half of it. It is the hardest of the four to spot, and shows up as a moderate drop ratio combined with a delay anomaly.' },
 ];
 
 export default function SimulationPage() {
   const theme = useTheme();
   const grid = theme.palette.divider;
-  const tip = useChartTip();
   const sim = useSim();
 
   const [attack, setAttack] = useState('Blackhole');
@@ -63,52 +64,65 @@ export default function SimulationPage() {
   };
 
   const series = sim.metricsHist.slice(-24);
-  const latest = series[series.length - 1] || {};
 
   // guided lifecycle for the focused node — follow it, or the latest detection
   const focusUid = focus || sim.attacks[0]?.node_uid || '';
   const fNode = byUid[focusUid];
   const fDet  = sim.attacks.find(a => a.node_uid === focusUid);
+  const fEp   = (sim.attackTimeline || []).find(e => e.node_uid === focusUid);
+  const healing = !!fNode?.is_isolated && !fNode?.is_malicious;
   const recovered = fNode && !fNode.is_malicious && !fNode.is_isolated && !!fDet;
   const fRecovery = [...sim.recoveryEvents].reverse().find(e => e.node_uid === focusUid);
   const fSnapshot = snapshots[focusUid];
+  const readmitAt = (sim.autoRecovery?.threshold ?? TRUST_THRESHOLD) + 0.25;
 
+  // Mirrors the backend phases (network.py PHASE_*) rather than guessing from
+  // flags, so the walkthrough can never claim a stage the engine is not in.
   let activeStep;
   if (!focusUid || !fNode) activeStep = 0;
-  else if (recovered) activeStep = 5;                                   // all done
-  else if (fNode.is_isolated) activeStep = sim.stats.reroutedPaths > 0 ? 4 : 3;
+  else if (recovered) activeStep = 5;
+  else if (healing) activeStep = 4;                  // scrubbed, rebuilding trust
+  else if (fNode.is_isolated) activeStep = 3;        // quarantined, still compromised
   else if (fDet) activeStep = 2;
   else if (fNode.is_malicious) activeStep = 1;
   else activeStep = 0;
 
+  const trustBar = (value, color, caption) => (
+    <Box mt={1}>
+      <Stack direction="row" justifyContent="space-between" mb={0.4}>
+        <Typography variant="caption" color="text.secondary">{caption}</Typography>
+        <Typography variant="caption" fontWeight={700} fontFamily="'JetBrains Mono', monospace"
+          sx={{ color }}>{value.toFixed(3)}</Typography>
+      </Stack>
+      <LinearProgress variant="determinate" value={Math.min(100, value * 100)}
+        sx={{ height: 6, borderRadius: 999, bgcolor: alpha(color, 0.15),
+          '& .MuiLinearProgress-bar': { bgcolor: color } }} />
+    </Box>
+  );
+
   const STEPS = [
     { label: 'Attack injected', color: DANGER,
-      body: fNode ? `${focusUid} is now a ${fNode.attack || attack} attacker and starts misbehaving on the very next round.`
+      body: fNode ? `${focusUid} is now a ${fNode.attack || fEp?.attack_type || attack} attacker and starts misbehaving on the very next round.`
         : 'Pick an attack and a target, then press Inject — the walkthrough starts here.' },
     { label: 'Trust degrading', color: WARN,
       body: `Each evaluation round the trust engine penalises ${focusUid || 'the node'} for dropped packets, delay and identity anomalies. Its trust falls toward the isolation threshold (${TRUST_THRESHOLD.toFixed(2)}).`,
-      extra: fNode && (
-        <Box mt={1}>
-          <Stack direction="row" justifyContent="space-between" mb={0.4}>
-            <Typography variant="caption" color="text.secondary">live trust</Typography>
-            <Typography variant="caption" fontWeight={700} fontFamily="'JetBrains Mono', monospace" sx={{ color: trustColor(fNode.trust_score) }}>{fNode.trust_score.toFixed(3)}</Typography>
-          </Stack>
-          <LinearProgress variant="determinate" value={fNode.trust_score * 100}
-            sx={{ height: 6, borderRadius: 999, bgcolor: alpha(trustColor(fNode.trust_score), 0.15),
-              '& .MuiLinearProgress-bar': { bgcolor: trustColor(fNode.trust_score) } }} />
-        </Box>
-      ) },
+      extra: fNode && trustBar(fNode.trust_score, trustColor(fNode.trust_score), 'live trust') },
     { label: 'Anomaly detected', color: WARN,
-      body: fDet ? `Detected as ${fDet.attack_type} (${fDet.severity}) with ${(fDet.confidence * 100).toFixed(0)}% confidence — drop ratio ${(fDet.drop_ratio * 100).toFixed(0)}%, delay σ ${fDet.delay_anomaly}.`
+      body: fDet ? `Detected as ${fDet.attack_type} (${fDet.severity}) with ${(fDet.confidence * 100).toFixed(0)}% confidence — drop ratio ${(fDet.drop_ratio * 100).toFixed(0)}%, delay σ ${fDet.delay_anomaly}.${fEp?.detect_sec != null ? ` Took ${formatDuration(fEp.detect_sec)} from injection.` : ''}`
         : 'Once trust crosses the threshold, the behaviour is flagged as a confirmed detection.' },
     { label: 'Isolated & sealed on-chain', color: DANGER,
       body: fDet && fDet.block_index != null
-        ? `${focusUid} is quarantined and the detection is sealed into event-driven block #${fDet.block_index}. This is the project's novelty — a block is minted only when an attack happens.`
+        ? `${focusUid} is quarantined — pulled out of the routing pool so it can do no further harm — and the detection is sealed into event-driven block #${fDet.block_index}. A block is minted only when an attack happens; that is the project's novelty.`
         : 'The node is quarantined and a single blockchain block is sealed for tamper-proof provenance.' },
-    { label: 'Rerouted & recovered', color: ACCENT2,
+    { label: 'Remediated & rebuilding trust', color: ACCENT,
+      body: healing
+        ? `The trust engine scrubbed ${focusUid}'s compromised behaviour after ${sim.autoRecovery?.quarantineTicks ?? 3} rounds in quarantine. It is now on probation: trust rebuilds each round and it rejoins routing at ${readmitAt.toFixed(2)} — no operator action required.`
+        : `After a few rounds in quarantine the attack behaviour is scrubbed automatically. The node then has to earn its way back above ${readmitAt.toFixed(2)} before it is readmitted — a still-misbehaving node can never talk its way back in.`,
+      extra: healing && fNode && trustBar(fNode.trust_score, ACCENT, `rebuilding toward ${readmitAt.toFixed(2)}`) },
+    { label: 'Readmitted & recovered', color: ACCENT2,
       body: fRecovery
-        ? `${focusUid} was ${fRecovery.method === 'auto' ? 'auto-healed by the trust engine' : 'manually restored by the operator'} after ${fRecovery.duration_sec.toFixed(0)}s isolated. Trust-aware AODV rebuilt routes around it while it was out — packet delivery is now ${(latest.pdr ?? 0).toFixed(0)}%.`
-        : `Trust-aware AODV rebuilds routes around ${focusUid || 'the isolated node'}. Packet delivery climbs back up — currently ${(latest.pdr ?? 0).toFixed(0)}%.` },
+        ? `${focusUid} was ${fRecovery.method === 'auto' ? 'recovered automatically by the trust engine' : 'manually restored by the operator'} after ${formatDuration(fRecovery.duration_sec)} out of service${fEp?.total_sec != null ? `, ${formatDuration(fEp.total_sec)} end to end` : ''}. Trust-aware AODV rebuilt routes around it while it was out — packet delivery is now ${Math.round(sim.stats.pdr)}%.`
+        : `Trust-aware AODV rebuilds routes around ${focusUid || 'the isolated node'} while it heals, then the node returns to service. Packet delivery climbs back up — currently ${Math.round(sim.stats.pdr)}%.` },
   ];
 
   return (
@@ -141,12 +155,12 @@ export default function SimulationPage() {
               {ATTACKS.map(a => {
                 const sel = attack === a.key;
                 return (
-                  <Grid item xs={4} key={a.key}>
+                  <Grid item xs={6} key={a.key}>
                     <Box onClick={() => setAttack(a.key)}
                       sx={{ cursor: 'pointer', p: 1.2, borderRadius: 2.5, height: '100%', textAlign: 'center',
                         border: `1.5px solid ${sel ? a.color : grid}`,
                         background: sel ? alpha(a.color, 0.14) : 'transparent',
-                        boxShadow: sel ? `0 0 18px ${alpha(a.color, 0.4)}` : 'none', transition: 'all .2s' }}>
+                        transition: 'all .2s', '&:hover': { borderColor: alpha(a.color, 0.6) } }}>
                       <BugReportIcon sx={{ fontSize: 20, color: a.color }} />
                       <Typography variant="body2" fontWeight={800} sx={{ color: sel ? a.color : 'text.primary' }}>{a.key}</Typography>
                     </Box>
@@ -186,16 +200,24 @@ export default function SimulationPage() {
               <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase" letterSpacing={0.6}>
                 3 · Launch it
               </Typography>
-              <Tooltip title="Attacks are capped so an incident can never take over the whole network — contain and recover before the cap frees up.">
-                <Chip size="small" icon={<ShieldIcon sx={{ fontSize: 13 }} />} label={`${cap.used}/${cap.max} compromised`}
-                  sx={{ height: 20, fontSize: 10.5, fontWeight: 700,
-                    bgcolor: alpha(capReached ? DANGER : ACCENT2, 0.14), color: capReached ? DANGER : ACCENT2 }} />
-              </Tooltip>
+              <Stack direction="row" spacing={0.8}>
+                <Tooltip title="Toggle off the trust engine to demo the 'existing system' baseline — attacks get detected but never automatically isolated.">
+                  <Chip size="small" clickable onClick={() => sim.setBaselineMode(!sim.baselineMode)}
+                    label={sim.baselineMode ? 'Baseline (no trust engine)' : 'Proposed system'}
+                    sx={{ height: 20, fontSize: 10.5, fontWeight: 700,
+                      bgcolor: alpha(sim.baselineMode ? DANGER : ACCENT2, 0.14), color: sim.baselineMode ? DANGER : ACCENT2 }} />
+                </Tooltip>
+                <Tooltip title="Attacks are capped so an incident can never take over the whole network — contain and recover before the cap frees up.">
+                  <Chip size="small" icon={<ShieldIcon sx={{ fontSize: 13 }} />} label={`${cap.used}/${cap.max} compromised`}
+                    sx={{ height: 20, fontSize: 10.5, fontWeight: 700,
+                      bgcolor: alpha(capReached ? DANGER : ACCENT2, 0.14), color: capReached ? DANGER : ACCENT2 }} />
+                </Tooltip>
+              </Stack>
             </Stack>
             <Button fullWidth variant="contained" size="large" disabled={!effectiveTarget || capReached} onClick={inject} startIcon={<BoltIcon />}
               sx={{ mt: 0.8, py: 1.4, fontWeight: 700, letterSpacing: 0.3, borderRadius: 2,
                 background: DANGER, color: '#fff',
-                '&:hover': { background: '#b91c1c' } }}>
+                '&:hover': { background: '#e11d48' } }}>
               {capReached ? 'Attack Cap Reached' : `Inject ${attack} Attack — Live`}
             </Button>
 
@@ -212,8 +234,9 @@ export default function SimulationPage() {
 
             <Stack direction="row" spacing={1} mt={2.5} justifyContent="space-around">
               <Stat label="Nodes" value={sim.stats.totalNodes} color={ACCENT} />
-              <Stat label="Infected" value={sim.stats.maliciousActive} color={WARN} />
-              <Stat label="Isolated" value={sim.stats.isolatedNodes} color={DANGER} />
+              <Stat label="Attacking" value={sim.stats.maliciousActive} color={DANGER} />
+              <Stat label="Quarantined" value={sim.stats.isolatedNodes} color={WARN} />
+              <Stat label="Recovering" value={sim.stats.recoveringNodes} color={NEON} />
             </Stack>
           </Panel>
         </Grid>
@@ -279,8 +302,16 @@ export default function SimulationPage() {
 
             {recovered && (
               <Alert icon={<CheckCircleIcon />} severity="success" sx={{ mt: 1, borderRadius: 2 }}>
-                Threat neutralised — {focusUid} handled end-to-end: detected, isolated, sealed on-chain and routed around
-                {fRecovery && ` in ${fRecovery.duration_sec.toFixed(0)}s`}.
+                <b>{focusUid} recovered.</b> Handled end to end — detected, isolated, sealed on-chain, routed
+                around, scrubbed and readmitted
+                {fEp?.total_sec != null && ` in ${formatDuration(fEp.total_sec)}`}
+                {fRecovery?.method === 'auto' ? ' with no operator action.' : '.'}
+              </Alert>
+            )}
+            {healing && (
+              <Alert icon={<HealingIcon />} severity="info" sx={{ mt: 1, borderRadius: 2 }}>
+                <b>{focusUid} is recovering.</b> The attack has been scrubbed; it rejoins routing once trust
+                reaches {readmitAt.toFixed(2)} (currently {fNode.trust_score.toFixed(2)}).
               </Alert>
             )}
           </Panel>
@@ -290,19 +321,10 @@ export default function SimulationPage() {
         <Grid item xs={12} md={5}>
           <Panel accent={ACCENT} title="Live Delivery Ratio (reacts to attacks)"
             action={<Typography variant="h6" fontFamily="'JetBrains Mono', monospace"
-              sx={{ color: (latest.pdr ?? 100) >= 80 ? ACCENT2 : DANGER }}>{(latest.pdr ?? 0).toFixed(0)}%</Typography>}>
-            <Box height={150}>
-              <ResponsiveContainer>
-                <AreaChart data={series}>
-                  <defs><linearGradient id="gSimPdr" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={ACCENT} stopOpacity={0.45} /><stop offset="100%" stopColor={ACCENT} stopOpacity={0} /></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="2 4" stroke={grid} />
-                  <XAxis dataKey="time" stroke={theme.palette.text.secondary} fontSize={10} minTickGap={30} />
-                  <YAxis domain={[0, 100]} stroke={theme.palette.text.secondary} fontSize={10} width={28} />
-                  <RTooltip contentStyle={tip} />
-                  <Area type="monotone" dataKey="pdr" stroke={ACCENT} strokeWidth={2.5} fill="url(#gSimPdr)" name="PDR %" isAnimationActive={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </Box>
+              sx={{ color: sim.stats.pdr >= 80 ? ACCENT2 : DANGER }}>{Math.round(sim.stats.pdr)}%</Typography>}>
+            <LiveChart data={series} height={160} yDomain={[0, 100]}
+              series={[{ key: 'pdr', label: 'PDR %', color: ACCENT, type: 'area' }]}
+              footnote="Shading marks the rounds the network was under attack — watch delivery dip and climb back as the engine isolates and heals." />
           </Panel>
         </Grid>
 
@@ -344,13 +366,16 @@ export default function SimulationPage() {
             <Box sx={{ display: 'grid', gap: 1.2,
               gridTemplateColumns: { xs: 'repeat(3,1fr)', sm: 'repeat(6,1fr)', md: 'repeat(8,1fr)', lg: 'repeat(12,1fr)' } }}>
               {sim.nodes.map(n => {
-                const c = n.is_isolated ? DANGER : trustColor(n.trust_score);
+                // same colour language as the map: a scrubbed node in quarantine
+                // is healing, not hostile, so it must not read as an attacker
+                const isHealing = n.is_isolated && !n.is_malicious;
+                const c = n.is_malicious ? DANGER : isHealing ? NEON : trustColor(n.trust_score);
                 const hot = n.is_malicious || n.is_isolated;
                 const selectable = n.role !== 'Sink' && !hot;
                 const isTarget = effectiveTarget === n.node_uid;
                 return (
                   <Tooltip key={n.node_uid} arrow
-                    title={`${n.node_uid} · ${n.role} · trust ${n.trust_score?.toFixed(2)}${n.is_isolated ? ' · ISOLATED' : n.is_malicious ? ` · ${n.attack}` : selectable ? ' · click to target' : ''}`}>
+                    title={`${n.node_uid} · ${n.role} · trust ${n.trust_score?.toFixed(2)}${n.is_malicious ? ` · ATTACKING (${n.attack})` : isHealing ? ' · RECOVERING' : selectable ? ' · click to target' : ''}`}>
                     <Box onClick={() => selectable && setTarget(n.node_uid)}
                       sx={{ p: 1, borderRadius: 2, textAlign: 'center', position: 'relative', cursor: selectable ? 'pointer' : 'default',
                         border: `1.5px solid ${isTarget ? ACCENT : alpha(c, 0.5)}`, background: alpha(isTarget ? ACCENT : c, 0.1),
@@ -365,8 +390,11 @@ export default function SimulationPage() {
                 );
               })}
             </Box>
-            <Stack direction="row" spacing={2} mt={2} flexWrap="wrap">
-              <Legend c={ACCENT2} t="Trusted (≥0.70)" /><Legend c="#ffd54a" t="Suspect (0.40–0.70)" /><Legend c={DANGER} t="Rogue / Isolated (<0.40)" />
+            <Stack direction="row" spacing={2} mt={2} flexWrap="wrap" useFlexGap>
+              <Legend c={ACCENT2} t="Trusted (≥0.70)" />
+              <Legend c={WARN} t="Suspect (0.40–0.70)" />
+              <Legend c={DANGER} t="Attacking" />
+              <Legend c={NEON} t="Recovering (scrubbed, rebuilding trust)" />
             </Stack>
           </Panel>
         </Grid>
@@ -412,3 +440,4 @@ function Legend({ c, t }) {
     </Stack>
   );
 }
+

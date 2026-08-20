@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     MAX_MALICIOUS_PCT: float = 0.25      # attack containment cap — never let more than this
                                           # share of the network be compromised at once
 
+    # Automatic recovery. An isolated node is scrubbed after QUARANTINE_TICKS
+    # rounds, then has to earn its way back above TRUST_THRESHOLD at
+    # TRUST_REBUILD_RATE per round before it is readmitted to routing.
+    AUTO_RECOVERY:      bool  = True     # off ⇒ isolation is permanent (baseline behaviour)
+    QUARANTINE_TICKS:   int   = 3        # rounds of isolation before remediation completes
+    TRUST_REBUILD_RATE: float = 0.08     # trust regained per round while on probation
+    # Hysteresis. A node is isolated at TRUST_THRESHOLD but only readmitted
+    # once it climbs this much higher, so a freshly recovered node does not sit
+    # on the boundary and flap straight back into quarantine.
+    READMIT_MARGIN:     float = 0.25
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:5174",
         "http://localhost:5173",

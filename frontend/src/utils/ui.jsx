@@ -1,8 +1,10 @@
 import React from 'react';
-import { Box, Card, Typography, Stack, useTheme, alpha, LinearProgress, Grid, keyframes } from '@mui/material';
+import { Box, Card, Chip, Typography, Stack, useTheme, alpha, LinearProgress, Grid, keyframes } from '@mui/material';
 
-/*  Redesigned shared UI kit — "cyber ops" surfaces, live indicators,
- *  sparklines and stat cards used across every console page.                */
+/*  Shared UI kit — security-operations surfaces, live indicators, sparklines,
+ *  stat cards and the lifecycle/duration primitives used across every console
+ *  page. Anything that appears on more than one page belongs here rather than
+ *  being re-styled per page, so the console reads as one system.            */
 
 export const pulse = keyframes`0%,100%{opacity:1}50%{opacity:.25}`;
 export const rise  = keyframes`from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}`;
@@ -11,8 +13,8 @@ export const spin  = keyframes`from{transform:rotate(0deg)}to{transform:rotate(3
 
 function cardShadow(theme) {
   return theme.palette.mode === 'dark'
-    ? '0 1px 2px rgba(0,0,0,0.4)'
-    : '0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06)';
+    ? '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 24px rgba(3,7,18,0.45)'
+    : '0 1px 2px rgba(15,23,42,0.04), 0 4px 12px rgba(15,23,42,0.06)';
 }
 
 // A "live" status dot — small, calm, no glow halo.
@@ -48,23 +50,31 @@ export function PageHeader({ icon, title, subtitle, action, accent }) {
   );
 }
 
-// Section / panel surface — flat card, thin accent-coloured top hairline.
-export function Panel({ title, action, children, sx, accent, dense }) {
+// Section / panel surface — accent hairline along the top edge, header row
+// separated by a divider so dense telemetry panels stay scannable.
+export function Panel({ title, action, children, sx, accent, dense, subtitle }) {
   const theme = useTheme();
   const c = accent || theme.palette.primary.main;
   return (
     <Card sx={{ p: dense ? 2 : 2.5, height: '100%', position: 'relative', overflow: 'hidden',
       boxShadow: cardShadow(theme), ...sx }}>
       {accent && (
-        <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: c }} />
+        <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+          background: `linear-gradient(90deg, ${c}, ${alpha(c, 0)})` }} />
       )}
       {(title || action) && (
-        <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" mb={subtitle ? 0.4 : 2}
+          flexWrap="wrap" gap={1}>
           {title && (typeof title === 'string'
             ? <Typography variant="subtitle1" fontWeight={700} letterSpacing={0.1}>{title}</Typography>
             : title)}
           {action}
         </Stack>
+      )}
+      {subtitle && (
+        <Typography variant="caption" color="text.secondary" display="block" mb={2} lineHeight={1.5}>
+          {subtitle}
+        </Typography>
       )}
       {children}
     </Card>
@@ -259,47 +269,107 @@ export function cardShadowOf(theme) { return cardShadow(theme); }
 // Shared recharts tooltip style.
 export function useChartTip() {
   const theme = useTheme();
+  const dark = theme.palette.mode === 'dark';
   return {
-    background: theme.palette.mode === 'dark' ? '#111827' : '#fff',
-    border: `1px solid ${theme.palette.divider}`, borderRadius: 8, fontSize: 12,
-    boxShadow: theme.palette.mode === 'dark' ? '0 4px 12px rgba(0,0,0,0.35)' : '0 4px 12px rgba(15,23,42,0.08)',
+    background: theme.palette.background.paper,
+    border: `1px solid ${theme.palette.divider}`, borderRadius: 9, fontSize: 12,
+    padding: '8px 10px',
+    boxShadow: dark ? '0 10px 28px rgba(3,7,18,0.6)' : '0 6px 18px rgba(15,23,42,0.10)',
     color: theme.palette.text.primary,
   };
 }
 
 // ── palettes ──
+// Every value here is mid-luminance on purpose: the console runs dark by
+// default but the light toggle has to stay readable, and one palette that
+// works on both beats two that drift apart.
 export const ATTACK_COLORS = {
-  Blackhole: '#ff4d6d', Sybil: '#7c6cff', Wormhole: '#ffab3d', Grayhole: '#38bdf8', Normal: '#25e6b8',
+  Blackhole: '#f43f5e',  // rose   — swallows everything
+  Sybil:     '#8b5cf6',  // violet — forged identities
+  Wormhole:  '#d97706',  // amber  — the two-node tunnel
+  Grayhole:  '#0ea5e9',  // sky    — selective, sneaky
+  Normal:    '#059669',
+  'Manual Isolation': '#64748b',
 };
 export const SEVERITY_COLORS = {
-  Critical: '#ff4d6d', High: '#ffab3d', Medium: '#ffd54a', Low: '#38bdf8',
+  Critical: '#f43f5e', High: '#d97706', Medium: '#8b5cf6', Low: '#0ea5e9',
 };
 export const STATUS_COLORS = {
-  Detected: '#ffab3d', Isolated: '#ff4d6d', Recovered: '#25e6b8', Mitigated: '#38bdf8',
-  Active: '#25e6b8', Sleeping: '#94a3b8', Dead: '#64748b',
+  Detected: '#d97706', Isolated: '#f43f5e', Recovered: '#059669', Mitigated: '#0ea5e9',
+  Active: '#059669', Recovering: '#0891b2', Sleeping: '#64748b', Dead: '#475569',
 };
 
+// Node lifecycle — mirrors the PHASE_* constants in backend/app/sim/network.py.
+export const PHASE_COLORS = {
+  Active:      '#059669',
+  Compromised: '#f43f5e',
+  Detected:    '#d97706',
+  Isolated:    '#f43f5e',
+  Remediating: '#0891b2',
+  Recovered:   '#059669',
+};
+export const PHASE_ORDER = ['Active', 'Compromised', 'Detected', 'Isolated', 'Remediating', 'Recovered'];
+
 export function trustColor(t) {
-  if (t >= 0.7) return '#25e6b8';
-  if (t >= 0.4) return '#ffd54a';
-  return '#ff4d6d';
+  if (t >= 0.7) return '#059669';
+  if (t >= 0.4) return '#d97706';
+  return '#f43f5e';
 }
 
 // Distinct areas on the topology map — one Cluster Head per zone.
-export const ZONE_COLORS = ['#7c6cff', '#38bdf8', '#ffab3d', '#25e6b8', '#f472b6', '#a3e635'];
+export const ZONE_COLORS = ['#8b5cf6', '#0ea5e9', '#d97706', '#059669', '#db2777', '#65a30d'];
 export function zoneColor(label) {
-  if (!label) return '#94a3b8';
+  if (!label) return '#64748b';
   const idx = (label.charCodeAt(label.length - 1) - 65) % ZONE_COLORS.length;
   return ZONE_COLORS[idx < 0 ? 0 : idx];
 }
 
 // "Different tricks for different isolation" — each attack type quarantines
-// with a distinct ring animation + dash pattern (+ its own hand-drawn badge
-// glyph, see AttackBadgeGlyph in TopologyPage) so the map reads differently
-// per attack type.
+// with a distinct ring treatment, so a glance at the map tells you *what* was
+// caught, not merely that something was. Wormhole additionally draws its
+// two-node tunnel (see NetworkMap) because it is the one attack that is not a
+// property of a single node.
 export const ISOLATION_TREATMENT = {
-  Blackhole: { ringAnim: pulse, dash: 'none' },
-  Sybil:     { ringAnim: pulse, dash: '2 3' },
-  Wormhole:  { ringAnim: spin,  dash: '4 3' },
-  Grayhole:  { ringAnim: pulse, dash: '1 4' },
+  Blackhole: { ringAnim: pulse, dash: 'none', rings: 1, label: 'solid pulsing ring — total packet sink' },
+  Sybil:     { ringAnim: pulse, dash: '2 3',  rings: 2, label: 'double dotted ring — one node, many identities' },
+  Wormhole:  { ringAnim: spin,  dash: '4 3',  rings: 1, label: 'rotating dashed ring + tunnel to its partner' },
+  Grayhole:  { ringAnim: pulse, dash: '1 4',  rings: 1, label: 'fine dotted ring — drops only some packets' },
 };
+
+// ── formatting ──
+// One duration format everywhere, so the same elapsed time never reads as
+// "12s" in one panel and "0.2m" in the next.
+export function formatDuration(sec) {
+  if (sec == null || Number.isNaN(sec)) return '—';
+  if (sec < 1) return '<1s';
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+// Lifecycle badge — same colour language as the map and the timeline.
+export function PhaseChip({ phase, size = 'small', sx }) {
+  const c = PHASE_COLORS[phase] || '#64748b';
+  return (
+    <Chip size={size} label={phase} sx={{ height: 21, fontSize: 10.5, fontWeight: 700, letterSpacing: 0.2,
+      bgcolor: alpha(c, 0.16), color: c, border: `1px solid ${alpha(c, 0.32)}`, ...sx }} />
+  );
+}
+
+// A labelled duration — the "how long did it take" unit used across the
+// recovery panels.
+export function TimeStat({ label, value, color, hint }) {
+  const theme = useTheme();
+  const c = color || theme.palette.primary.main;
+  return (
+    <Box sx={{ flex: 1, minWidth: 92 }}>
+      <Typography variant="caption" color="text.secondary" fontSize={9.5} fontWeight={700}
+        textTransform="uppercase" letterSpacing={0.5} display="block" noWrap>{label}</Typography>
+      <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, fontSize: 19, color: c, lineHeight: 1.2 }}>
+        {value}
+      </Typography>
+      {hint && <Typography variant="caption" color="text.secondary" fontSize={9.5} noWrap>{hint}</Typography>}
+    </Box>
+  );
+}
