@@ -10,7 +10,7 @@ import AltRouteIcon from '@mui/icons-material/AltRoute';
 import { useSim } from '../sim/SimContext';
 import {
   PageHeader, Panel, StatCard, LiveDot, LegendDot, trustColor, STATUS_COLORS,
-  zoneColor, ISOLATION_TREATMENT, pulse,
+  zoneColor, ISOLATION_TREATMENT, pulse, ATTACK_COLORS,
 } from '../utils/ui';
 import { ACCENT, ACCENT2, WARN, DANGER } from '../context/ThemeContext';
 
@@ -54,6 +54,20 @@ export default function TopologyPage() {
       return { label, members, cx, cy, radius, color: zoneColor(label), hasThreat };
     });
   }, [nodes]);
+
+  // Wormhole is a two-node tunnel attack — draw the colluding pair as a link
+  const wormholeLinks = useMemo(() => {
+    const seen = new Set();
+    const links = [];
+    nodes.forEach(n => {
+      if (n.attack !== 'Wormhole' || !n.partner || !byUid[n.partner]) return;
+      const key = [n.node_uid, n.partner].sort().join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      links.push({ a: n, b: byUid[n.partner] });
+    });
+    return links;
+  }, [nodes, byUid]);
 
   return (
     <Box>
@@ -118,6 +132,26 @@ export default function TopologyPage() {
                 );
               })}
 
+              {/* Wormhole tunnels — two colluding nodes, drawn as a distinct glowing link */}
+              {wormholeLinks.map(({ a, b }) => {
+                const dim = activeZone && a.zone_label !== activeZone && b.zone_label !== activeZone;
+                const x1 = X(a.pos_x), y1 = Y(a.pos_y), x2 = X(b.pos_x), y2 = Y(b.pos_y);
+                const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+                return (
+                  <g key={`wh-${a.node_uid}-${b.node_uid}`} opacity={dim ? 0.15 : 1} style={{ transition: 'opacity .25s' }}>
+                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={ATTACK_COLORS.Wormhole} strokeWidth={2.4}
+                      strokeDasharray="3 6" strokeLinecap="round" opacity={0.85}>
+                      <animate attributeName="stroke-dashoffset" values="0;-18" dur="1s" repeatCount="indefinite" />
+                    </line>
+                    <g>
+                      <circle cx={mx} cy={my} r={8} fill={theme.palette.background.paper} stroke={ATTACK_COLORS.Wormhole} strokeWidth={1} />
+                      <circle cx={mx} cy={my} r={4.5} fill="none" stroke={ATTACK_COLORS.Wormhole} strokeWidth={1.2} />
+                      <circle cx={mx} cy={my} r={1.6} fill={ATTACK_COLORS.Wormhole} />
+                    </g>
+                  </g>
+                );
+              })}
+
               {/* routes + animated packets */}
               {routes.map((r, ri) => {
                 const pts = (r.hops || []).map(h => byUid[h]).filter(Boolean);
@@ -171,9 +205,9 @@ export default function TopologyPage() {
                     <circle cx={cx} cy={cy} r={r} fill={alpha(c, 0.85)} stroke={c} strokeWidth={2} />
                     {isSink && <circle cx={cx} cy={cy} r={r + 4} fill="none" stroke={c} strokeWidth={1} strokeDasharray="3 3" />}
                     {n.is_isolated && treatment && (
-                      <g transform={`translate(${cx + r - 3}, ${cy - r - 3})`}>
-                        <circle r={7} fill={theme.palette.background.paper} stroke={c} strokeWidth={1} />
-                        <treatment.Icon sx={{ fontSize: 10, color: c }} style={{ transform: 'translate(-5px,-5px)' }} />
+                      <g>
+                        <circle cx={cx + r - 2} cy={cy - r + 2} r={6.5} fill={theme.palette.background.paper} stroke={c} strokeWidth={1} />
+                        <AttackBadgeGlyph attack={n.attack} cx={cx + r - 2} cy={cy - r + 2} color={c} />
                       </g>
                     )}
                     <text x={cx} y={cy - r - 5} fontSize={10} textAnchor="middle"
@@ -233,6 +267,31 @@ export default function TopologyPage() {
       </Grid>
     </Box>
   );
+}
+
+// Tiny hand-drawn glyphs, one per attack type — plain SVG primitives only.
+// (A React icon component rendered as a nested <svg> inside this hand-authored
+// map does not size reliably across browsers, so no MUI icons in here.)
+function AttackBadgeGlyph({ attack, cx, cy, color }) {
+  switch (attack) {
+    case 'Blackhole':
+      return <g><circle cx={cx} cy={cy} r={3.4} fill="none" stroke={color} strokeWidth={1.2} />
+        <line x1={cx - 2.4} y1={cy - 2.4} x2={cx + 2.4} y2={cy + 2.4} stroke={color} strokeWidth={1.2} /></g>;
+    case 'Sybil':
+      return <g>
+        <line x1={cx} y1={cy + 2.6} x2={cx} y2={cy - 0.5} stroke={color} strokeWidth={1.2} />
+        <line x1={cx} y1={cy - 0.5} x2={cx - 2.4} y2={cy - 2.8} stroke={color} strokeWidth={1.2} />
+        <line x1={cx} y1={cy - 0.5} x2={cx + 2.4} y2={cy - 2.8} stroke={color} strokeWidth={1.2} />
+      </g>;
+    case 'Wormhole':
+      return <g><circle cx={cx} cy={cy} r={3.2} fill="none" stroke={color} strokeWidth={1.2} />
+        <circle cx={cx} cy={cy} r={1} fill={color} /></g>;
+    case 'Grayhole':
+      return <g><ellipse cx={cx} cy={cy} rx={3.4} ry={2} fill="none" stroke={color} strokeWidth={1.1} />
+        <line x1={cx - 3} y1={cy + 2.4} x2={cx + 3} y2={cy - 2.4} stroke={color} strokeWidth={1.2} /></g>;
+    default:
+      return <circle cx={cx} cy={cy} r={2} fill={color} />;
+  }
 }
 
 function InfoRow({ label, value, color }) {

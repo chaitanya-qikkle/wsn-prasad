@@ -35,6 +35,7 @@ class Node:
     zone: str = ""
     zone_label: str = ""
     isolated_at: float | None = None
+    partner: str | None = None  # colluding node uid — Wormhole is a two-node tunnel attack
 
 
 class WSNSimulator:
@@ -46,6 +47,7 @@ class WSNSimulator:
         self.detections: list[dict] = []
         self.auto_healed: list[dict] = []
         self.recovery_events: list[dict] = []
+        self.round_history: list[tuple[int, int]] = []  # recent (forwarded, dropped) per round — for a PDR that actually reacts
         self._build(n_nodes, n_malicious)
 
     def _build(self, n, m):
@@ -65,6 +67,17 @@ class WSNSimulator:
                 attack=self.rng.choice(ATTACKS) if mal else None,
             )
         self._assign_zones()
+        for n in self.nodes.values():
+            if n.malicious and n.attack == "Wormhole":
+                n.partner = self._pick_wormhole_partner(n)
+
+    def _pick_wormhole_partner(self, n: Node) -> str | None:
+        """Wormhole is a two-node tunnel — pick the nearest other node to
+        collude with, purely for visualising the tunnel on the map."""
+        others = [o for o in self.nodes.values() if o.uid != n.uid and o.role != "Sink"]
+        if not others:
+            return None
+        return min(others, key=lambda o: self._dist(n, o)).uid
 
     def _assign_zones(self):
         """Group every node under its nearest Cluster Head — 'Zone A/B/C…' —
@@ -84,10 +97,14 @@ class WSNSimulator:
             n.zone_label = nearest.zone_label
 
     # ── trust engine ────────────────────────────────────────────────────────
+    ROUND_WINDOW = 6  # rounds kept for the live PDR window
+
     def evaluate_trust(self) -> list[dict]:
         """One evaluation round. Returns detections produced this round."""
         new_detections = []
         self.auto_healed = []
+        round_fwd = 0
+        round_drop = 0
         for n in self.nodes.values():
             if n.role == "Sink":
                 continue
@@ -109,6 +126,8 @@ class WSNSimulator:
             forwarded = traffic - dropped
             n.fwd += forwarded
             n.drop += dropped
+            round_fwd += forwarded
+            round_drop += dropped
             n.energy = max(0.0, n.energy - self.rng.uniform(0.1, 0.6))
 
             trust_before = n.trust
@@ -123,6 +142,10 @@ class WSNSimulator:
             if crossed or (n.malicious and n.trust < self.s.TRUST_THRESHOLD and self.rng.random() < 0.4):
                 det = self._make_detection(n, trust_before, dropped / traffic, delay_anom, identity)
                 new_detections.append(det)
+
+        self.round_history.append((round_fwd, round_drop))
+        if len(self.round_history) > self.ROUND_WINDOW:
+            self.round_history.pop(0)
 
         # event-driven: seal ONE block if anything was detected this round
         if new_detections:
@@ -220,9 +243,12 @@ class WSNSimulator:
     # ── metrics ─────────────────────────────────────────────────────────────
     def metrics(self) -> dict:
         active = [n for n in self.nodes.values() if not n.isolated]
-        total_fwd = sum(n.fwd for n in self.nodes.values())
-        total_drop = sum(n.drop for n in self.nodes.values())
-        pdr = 100.0 * total_fwd / max(1, total_fwd + total_drop)
+        # PDR reacts to the last few rounds only, not the whole run's history —
+        # otherwise a long-running demo makes new attacks/recoveries invisible
+        # because they get diluted into an ever-growing all-time average.
+        window_fwd = sum(f for f, _ in self.round_history)
+        window_drop = sum(d for _, d in self.round_history)
+        pdr = 100.0 * window_fwd / max(1, window_fwd + window_drop)
         mal_active = sum(1 for n in self.nodes.values() if n.malicious and not n.isolated)
         return {
             "pdr": round(pdr, 1),
@@ -243,6 +269,7 @@ class WSNSimulator:
             "status": "Isolated" if n.isolated else "Active",
             "packets_fwd": n.fwd, "packets_drop": n.drop, "avg_delay": round(n.delay, 1),
             "zone": n.zone, "zone_label": n.zone_label,
+            "attack": n.attack, "partner": n.partner if n.attack == "Wormhole" else None,
         } for n in self.nodes.values()]
 
     # ── attack containment cap ────────────────────────────────────────────────
@@ -267,6 +294,7 @@ class WSNSimulator:
         n.attack = attack_type
         n.isolated = False
         n.isolated_at = None
+        n.partner = self._pick_wormhole_partner(n) if attack_type == "Wormhole" else None
         # nudge trust just above threshold so the live drop is visible within a tick or two
         n.trust = round(max(self.s.TRUST_THRESHOLD + 0.22, min(n.trust, 0.8)), 3)
         return n
@@ -289,6 +317,7 @@ class WSNSimulator:
         n.isolated = False
         n.malicious = False
         n.attack = None
+        n.partner = None
         n.trust = 0.85
         return n
 
@@ -300,6 +329,7 @@ class WSNSimulator:
                     self._record_recovery(n, method="manual")
                 n.malicious = False
                 n.attack = None
+                n.partner = None
                 n.isolated = False
                 n.trust = 0.85
                 cnt += 1

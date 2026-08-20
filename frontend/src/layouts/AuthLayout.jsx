@@ -8,8 +8,8 @@ export default function AuthLayout() {
 
   if (loading) {
     return (
-      <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0b0f14' }}>
-        <CircularProgress sx={{ color: '#f5a524' }} />
+      <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc' }}>
+        <CircularProgress sx={{ color: '#2563eb' }} />
       </Box>
     );
   }

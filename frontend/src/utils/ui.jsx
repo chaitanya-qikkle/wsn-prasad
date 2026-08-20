@@ -1,9 +1,5 @@
 import React from 'react';
 import { Box, Card, Typography, Stack, useTheme, alpha, LinearProgress, Grid, keyframes } from '@mui/material';
-import BlockIcon        from '@mui/icons-material/Block';
-import CallSplitIcon    from '@mui/icons-material/CallSplit';
-import CycloneIcon      from '@mui/icons-material/Cyclone';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 
 /*  Redesigned shared UI kit — "cyber ops" surfaces, live indicators,
  *  sparklines and stat cards used across every console page.                */
@@ -15,17 +11,17 @@ export const spin  = keyframes`from{transform:rotate(0deg)}to{transform:rotate(3
 
 function cardShadow(theme) {
   return theme.palette.mode === 'dark'
-    ? '0 10px 34px rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.04)'
-    : '0 6px 22px rgba(0,0,0,0.06)';
+    ? '0 1px 2px rgba(0,0,0,0.4)'
+    : '0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06)';
 }
 
-// A pulsing "live" status dot.
+// A "live" status dot — small, calm, no glow halo.
 export function LiveDot({ color, size = 8 }) {
   const theme = useTheme();
   const c = color || theme.palette.success.main;
   return (
     <Box sx={{ width: size, height: size, borderRadius: '50%', bgcolor: c, flexShrink: 0,
-      boxShadow: `0 0 0 3px ${alpha(c, 0.18)}, 0 0 10px ${c}`, animation: `${pulse} 1.5s ease infinite` }} />
+      boxShadow: `0 0 0 3px ${alpha(c, 0.14)}`, animation: `${pulse} 1.8s ease infinite` }} />
   );
 }
 
@@ -37,14 +33,13 @@ export function PageHeader({ icon, title, subtitle, action, accent }) {
     <Box sx={{ display: 'flex', alignItems: { xs: 'flex-start', sm: 'center' }, justifyContent: 'space-between',
       gap: 2, mb: 3, flexWrap: 'wrap' }}>
       <Stack direction="row" spacing={2} alignItems="center">
-        <Box sx={{ width: 48, height: 48, borderRadius: 3, flexShrink: 0, color: c,
-          background: `linear-gradient(135deg, ${alpha(c, 0.22)}, ${alpha(c, 0.06)})`,
-          border: `1px solid ${alpha(c, 0.3)}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', '& svg': { fontSize: 24 } }}>
+        <Box sx={{ width: 44, height: 44, borderRadius: 2, flexShrink: 0, color: c,
+          background: alpha(c, 0.1), border: `1px solid ${alpha(c, 0.18)}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', '& svg': { fontSize: 22 } }}>
           {icon}
         </Box>
         <Box>
-          <Typography variant="h5" fontWeight={800} sx={{ lineHeight: 1.1, letterSpacing: -0.4 }}>{title}</Typography>
+          <Typography variant="h5" fontWeight={700} sx={{ lineHeight: 1.1, letterSpacing: -0.3 }}>{title}</Typography>
           {subtitle && <Typography variant="body2" color="text.secondary" mt={0.4}>{subtitle}</Typography>}
         </Box>
       </Stack>
@@ -53,7 +48,7 @@ export function PageHeader({ icon, title, subtitle, action, accent }) {
   );
 }
 
-// Section / panel surface — gradient hairline header, glow-tinted top edge.
+// Section / panel surface — flat card, thin accent-coloured top hairline.
 export function Panel({ title, action, children, sx, accent, dense }) {
   const theme = useTheme();
   const c = accent || theme.palette.primary.main;
@@ -61,13 +56,12 @@ export function Panel({ title, action, children, sx, accent, dense }) {
     <Card sx={{ p: dense ? 2 : 2.5, height: '100%', position: 'relative', overflow: 'hidden',
       boxShadow: cardShadow(theme), ...sx }}>
       {accent && (
-        <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2,
-          background: `linear-gradient(90deg, ${alpha(c, 0)}, ${c}, ${alpha(c, 0)})` }} />
+        <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: c }} />
       )}
       {(title || action) && (
         <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
           {title && (typeof title === 'string'
-            ? <Typography variant="subtitle1" fontWeight={800} letterSpacing={0.1}>{title}</Typography>
+            ? <Typography variant="subtitle1" fontWeight={700} letterSpacing={0.1}>{title}</Typography>
             : title)}
           {action}
         </Stack>
@@ -77,34 +71,31 @@ export function Panel({ title, action, children, sx, accent, dense }) {
   );
 }
 
-// KPI stat card — mono number, glowing icon chip, accent underline + sparkline.
+// KPI stat card — mono number, flat tinted icon chip, thin accent underline + sparkline.
 export function StatCard({ icon, label, value, sub, color, spark }) {
   const theme = useTheme();
   const c = color || theme.palette.primary.main;
   return (
     <Card sx={{ p: 2.4, height: '100%', position: 'relative', overflow: 'hidden', boxShadow: cardShadow(theme),
-      transition: 'transform .18s, border-color .18s',
-      '&:hover': { transform: 'translateY(-2px)', borderColor: alpha(c, 0.4) } }}>
+      transition: 'border-color .15s', '&:hover': { borderColor: alpha(c, 0.35) } }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
         <Box minWidth={0}>
           <Typography variant="caption" color="text.secondary" fontWeight={700} textTransform="uppercase"
             letterSpacing={0.6} fontSize={10.5} noWrap>{label}</Typography>
-          <Typography sx={{ mt: 0.6, fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, fontSize: 32, lineHeight: 1,
+          <Typography sx={{ mt: 0.6, fontFamily: '"JetBrains Mono", monospace', fontWeight: 700, fontSize: 30, lineHeight: 1,
             color: theme.palette.text.primary }}>{value}</Typography>
           {sub && <Typography variant="caption" color="text.secondary" mt={0.8} display="block" noWrap>{sub}</Typography>}
         </Box>
         {icon && (
-          <Box sx={{ width: 42, height: 42, borderRadius: 2.5, flexShrink: 0, color: c,
-            background: `linear-gradient(135deg, ${alpha(c, 0.24)}, ${alpha(c, 0.06)})`,
-            border: `1px solid ${alpha(c, 0.28)}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', '& svg': { fontSize: 22 } }}>{icon}</Box>
+          <Box sx={{ width: 38, height: 38, borderRadius: 2, flexShrink: 0, color: c,
+            background: alpha(c, 0.1), border: `1px solid ${alpha(c, 0.16)}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', '& svg': { fontSize: 19 } }}>{icon}</Box>
         )}
       </Stack>
       {spark && spark.length > 1 && (
         <Box sx={{ mt: 1.2, mx: -0.4 }}><Sparkline data={spark} color={c} height={26} /></Box>
       )}
-      <Box sx={{ position: 'absolute', left: 0, bottom: 0, height: 3, width: '100%',
-        background: `linear-gradient(90deg, ${c}, ${alpha(c, 0)})` }} />
+      <Box sx={{ position: 'absolute', left: 0, bottom: 0, height: 2, width: '100%', background: alpha(c, 0.5) }} />
     </Card>
   );
 }
@@ -198,8 +189,7 @@ export function Gauge({ value, max = 100, size = 150, color, label, unit = '%', 
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={alpha(theme.palette.text.primary, 0.07)} strokeWidth={thickness} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`url(#${id})`} strokeWidth={thickness}
           strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={circ * (1 - pct)}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: 'stroke-dashoffset 0.8s ease',
-            filter: `drop-shadow(0 0 6px ${alpha(c, 0.6)})` }} />
+          transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
       </svg>
       <Box sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, fontSize: size * 0.2, lineHeight: 1, color: c }}>
@@ -240,8 +230,8 @@ export function ProgressRow({ label, value, pct, color, chip }) {
         <Typography variant="body2" fontWeight={700} sx={{ color, fontFamily: '"JetBrains Mono", monospace' }}>{value}</Typography>
       </Stack>
       <LinearProgress variant="determinate" value={pct}
-        sx={{ height: 7, borderRadius: 999, bgcolor: alpha(color, 0.12),
-          '& .MuiLinearProgress-bar': { bgcolor: color, borderRadius: 999, boxShadow: `0 0 8px ${alpha(color, 0.7)}` } }} />
+        sx={{ height: 6, borderRadius: 999, bgcolor: alpha(color, 0.12),
+          '& .MuiLinearProgress-bar': { bgcolor: color, borderRadius: 999 } }} />
     </Box>
   );
 }
@@ -249,7 +239,7 @@ export function ProgressRow({ label, value, pct, color, chip }) {
 export function LegendDot({ color, label }) {
   return (
     <Stack direction="row" spacing={0.6} alignItems="center">
-      <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: color, boxShadow: `0 0 8px ${color}` }} />
+      <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: color }} />
       <Typography variant="caption" color="text.secondary">{label}</Typography>
     </Stack>
   );
@@ -270,9 +260,10 @@ export function cardShadowOf(theme) { return cardShadow(theme); }
 export function useChartTip() {
   const theme = useTheme();
   return {
-    background: theme.palette.mode === 'dark' ? 'rgba(18,20,39,0.96)' : '#fff',
-    border: `1px solid ${theme.palette.divider}`, borderRadius: 10, fontSize: 12,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.28)', color: theme.palette.text.primary,
+    background: theme.palette.mode === 'dark' ? '#111827' : '#fff',
+    border: `1px solid ${theme.palette.divider}`, borderRadius: 8, fontSize: 12,
+    boxShadow: theme.palette.mode === 'dark' ? '0 4px 12px rgba(0,0,0,0.35)' : '0 4px 12px rgba(15,23,42,0.08)',
+    color: theme.palette.text.primary,
   };
 }
 
@@ -303,10 +294,12 @@ export function zoneColor(label) {
 }
 
 // "Different tricks for different isolation" — each attack type quarantines
-// with a distinct icon + ring animation so the map reads differently per attack.
+// with a distinct ring animation + dash pattern (+ its own hand-drawn badge
+// glyph, see AttackBadgeGlyph in TopologyPage) so the map reads differently
+// per attack type.
 export const ISOLATION_TREATMENT = {
-  Blackhole: { Icon: BlockIcon,        ringAnim: pulse, dash: 'none' },
-  Sybil:     { Icon: CallSplitIcon,    ringAnim: pulse, dash: '2 3' },
-  Wormhole:  { Icon: CycloneIcon,      ringAnim: spin,  dash: '4 3' },
-  Grayhole:  { Icon: VisibilityOffIcon, ringAnim: pulse, dash: '1 4' },
+  Blackhole: { ringAnim: pulse, dash: 'none' },
+  Sybil:     { ringAnim: pulse, dash: '2 3' },
+  Wormhole:  { ringAnim: spin,  dash: '4 3' },
+  Grayhole:  { ringAnim: pulse, dash: '1 4' },
 };

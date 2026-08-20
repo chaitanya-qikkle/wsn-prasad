@@ -24,7 +24,7 @@ import PlayArrowIcon      from '@mui/icons-material/PlayArrow';
 import PauseIcon          from '@mui/icons-material/Pause';
 import BoltIcon           from '@mui/icons-material/Bolt';
 import { useAuth }        from '../context/AuthContext';
-import { useThemeMode, ACCENT, ACCENT2, DANGER, WARN, BG_MESH } from '../context/ThemeContext';
+import { useThemeMode, ACCENT, ACCENT2, DANGER, WARN } from '../context/ThemeContext';
 import { useSim } from '../sim/SimContext';
 import { LiveDot } from '../utils/ui';
 
@@ -80,21 +80,18 @@ export default function MainLayout() {
 
   const isActive = (p) => location.pathname === p;
   const handleSignOut = async () => { setAnchor(null); await signOut(); navigate('/login'); };
-  const panelBg = dark ? 'rgba(11,12,24,0.82)' : 'rgba(255,255,255,0.92)';
+  const panelBg = theme.palette.background.paper;
 
   const Brand = (
     <Stack direction="row" spacing={1.4} alignItems="center" sx={{ cursor: 'pointer', px: 2.5, py: 2.4 }}
       onClick={() => { navigate('/dashboard'); setMOpen(false); }}>
       <Box component="img" src="/logo.png" alt="TrustChain-WSN"
-        sx={{ width: 44, height: 44, objectFit: 'contain', borderRadius: '13px', flexShrink: 0,
-          filter: `drop-shadow(0 6px 16px ${alpha(ACCENT, 0.5)})` }} />
+        sx={{ width: 40, height: 40, objectFit: 'contain', borderRadius: '10px', flexShrink: 0 }} />
       <Box minWidth={0}>
-        <Typography fontWeight={900} noWrap sx={{ lineHeight: 1.05, fontSize: '1.18rem',
-          background: `linear-gradient(90deg,${ACCENT},${ACCENT2})`,
-          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: 0.3 }}>
+        <Typography fontWeight={700} noWrap sx={{ lineHeight: 1.05, fontSize: '1.1rem', color: theme.palette.text.primary, letterSpacing: -0.2 }}>
           TrustChain
         </Typography>
-        <Typography variant="caption" noWrap sx={{ color: theme.palette.text.secondary, fontSize: 9, letterSpacing: 1.8 }}>
+        <Typography variant="caption" noWrap sx={{ color: theme.palette.text.secondary, fontSize: 9, letterSpacing: 1.6, fontWeight: 600 }}>
           INDUSTRIAL WSN
         </Typography>
       </Box>
@@ -105,18 +102,16 @@ export default function MainLayout() {
     const active = isActive(item.path);
     return (
       <Box component={Link} to={item.path} onClick={() => setMOpen(false)}
-        sx={{ display: 'flex', alignItems: 'center', gap: 1.4, mx: 1.4, my: 0.3, px: 1.6, py: 1.1,
-          borderRadius: 2.5, textDecoration: 'none', position: 'relative',
-          color: active ? '#fff' : theme.palette.text.secondary,
-          fontWeight: active ? 700 : 600, fontSize: 14,
-          background: active ? `linear-gradient(90deg, ${alpha(ACCENT, 0.26)}, ${alpha(ACCENT, 0.05)})` : 'transparent',
-          boxShadow: active ? `inset 0 0 0 1px ${alpha(ACCENT, 0.28)}` : 'none',
-          transition: 'all .18s',
-          '&:hover': { background: alpha(ACCENT, active ? 0.28 : 0.1), color: active ? '#fff' : ACCENT },
-          '& svg': { fontSize: 20, color: active ? ACCENT : 'inherit' } }}>
+        sx={{ display: 'flex', alignItems: 'center', gap: 1.4, mx: 1.4, my: 0.2, px: 1.6, py: 1,
+          borderRadius: 1.5, textDecoration: 'none', position: 'relative',
+          color: active ? ACCENT : theme.palette.text.secondary,
+          fontWeight: active ? 600 : 500, fontSize: 14,
+          background: active ? alpha(ACCENT, dark ? 0.14 : 0.08) : 'transparent',
+          transition: 'background .15s, color .15s',
+          '&:hover': { background: alpha(ACCENT, active ? (dark ? 0.14 : 0.08) : (dark ? 0.08 : 0.05)), color: ACCENT },
+          '& svg': { fontSize: 19, color: active ? ACCENT : 'inherit' } }}>
         {active && (
-          <Box sx={{ position: 'absolute', left: -1.4, top: '22%', bottom: '22%', width: 3.5, borderRadius: 3,
-            background: `linear-gradient(${ACCENT},${ACCENT2})`, boxShadow: `0 0 10px ${ACCENT}` }} />
+          <Box sx={{ position: 'absolute', left: -1.4, top: '20%', bottom: '20%', width: 2.5, borderRadius: 3, background: ACCENT }} />
         )}
         {item.icon}<span>{item.label}</span>
       </Box>
@@ -133,7 +128,7 @@ export default function MainLayout() {
 
   const SidebarInner = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%',
-      background: panelBg, backdropFilter: 'blur(22px)', borderRight: `1px solid ${theme.palette.divider}` }}>
+      background: panelBg, borderRight: `1px solid ${theme.palette.divider}` }}>
       {Brand}
       <Divider sx={{ borderColor: theme.palette.divider, mx: 2 }} />
 
@@ -173,8 +168,8 @@ export default function MainLayout() {
         <Box onClick={(e) => setAnchor(e.currentTarget)}
           sx={{ display: 'flex', alignItems: 'center', gap: 1.2, p: 1.1, borderRadius: 2.5, cursor: 'pointer',
             border: `1px solid ${theme.palette.divider}`, '&:hover': { background: alpha(ACCENT, 0.07) } }}>
-          <Avatar sx={{ width: 34, height: 34, background: `linear-gradient(135deg,${ACCENT},${ACCENT2})`,
-            fontSize: 14, fontWeight: 700, color: '#0b0f14' }}>
+          <Avatar sx={{ width: 32, height: 32, background: ACCENT,
+            fontSize: 13, fontWeight: 700, color: '#fff' }}>
             {user?.email?.[0]?.toUpperCase() || 'O'}
           </Avatar>
           <Box minWidth={0} flex={1}>
@@ -187,8 +182,7 @@ export default function MainLayout() {
   );
 
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex',
-      background: dark ? BG_MESH : theme.palette.background.default, backgroundAttachment: 'fixed' }}>
+    <Box sx={{ minHeight: '100vh', display: 'flex', background: theme.palette.background.default }}>
 
       {!isMobile && (
         <Box sx={{ width: SIDEBAR_W, flexShrink: 0, position: 'sticky', top: 0, height: '100vh' }}>{SidebarInner}</Box>
@@ -206,7 +200,7 @@ export default function MainLayout() {
         )}
         {/* top control strip — GLOBAL simulation controls */}
         <Box sx={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', alignItems: 'center', gap: 0.8,
-          px: { xs: 1.5, md: 3 }, height: 60, background: alpha(panelBg, 0.75), backdropFilter: 'blur(20px)',
+          px: { xs: 1.5, md: 3 }, height: 56, background: panelBg,
           borderBottom: `1px solid ${theme.palette.divider}` }}>
           {isMobile && (
             <IconButton onClick={() => setMOpen(true)} sx={{ color: theme.palette.text.secondary }}><MenuIcon /></IconButton>

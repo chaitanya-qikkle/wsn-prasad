@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Box, TextField, Button, Typography, InputAdornment,
-  IconButton, Alert, CircularProgress, Stack, Paper, keyframes, MenuItem,
+  IconButton, Alert, CircularProgress, Stack, Paper, MenuItem,
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import LockIcon from '@mui/icons-material/Lock';
@@ -13,11 +13,6 @@ import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import SensorsIcon from '@mui/icons-material/Sensors';
 import { useAuth } from '../context/AuthContext';
 import { ACCENT, ACCENT2 } from '../context/ThemeContext';
-
-const pulse = keyframes`
-  0%, 100% { box-shadow: 0 0 0 0 rgba(34,211,238,0.4); }
-  50%       { box-shadow: 0 0 0 16px rgba(34,211,238,0); }
-`;
 
 const ROLES = ['Admin', 'Operator', 'Viewer'];
 
@@ -49,78 +44,70 @@ export default function RegisterPage() {
 
   const fieldSx = {
     '& .MuiOutlinedInput-root': {
-      color: '#fff', background: 'rgba(255,255,255,0.04)', borderRadius: 2,
-      '& fieldset': { borderColor: 'rgba(255,255,255,0.12)' },
-      '&:hover fieldset': { borderColor: `${ACCENT2}66` },
-      '&.Mui-focused fieldset': { borderColor: ACCENT2 },
+      color: '#0f172a', background: '#f8fafc', borderRadius: 2,
+      '& fieldset': { borderColor: 'rgba(15,23,42,0.14)' },
+      '&:hover fieldset': { borderColor: `${ACCENT2}77` },
+      '&.Mui-focused fieldset': { borderColor: ACCENT2, borderWidth: 1.5 },
     },
-    '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.4)' },
+    '& .MuiInputLabel-root': { color: 'rgba(15,23,42,0.5)' },
     '& .MuiInputLabel-root.Mui-focused': { color: ACCENT2 },
-    '& .MuiSelect-icon': { color: 'rgba(255,255,255,0.4)' },
+    '& .MuiSelect-icon': { color: 'rgba(15,23,42,0.4)' },
   };
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: `linear-gradient(135deg, #080b11 0%, #11161f 100%)`, px: 2, py: 4 }}>
-      <Box sx={{ position: 'fixed', inset: 0, zIndex: 0,
-        backgroundImage: `linear-gradient(rgba(34,211,238,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.03) 1px, transparent 1px)`,
-        backgroundSize: '50px 50px', pointerEvents: 'none' }} />
+      background: '#f1f5f9', px: 2, py: 4 }}>
 
       <Paper elevation={0} sx={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: 460, p: { xs: 3, sm: 5 },
-        background: 'rgba(255,255,255,0.03)', border: `1px solid ${ACCENT2}26`, borderRadius: 1.5,
+        background: '#ffffff', border: '1px solid rgba(15,23,42,0.08)', borderRadius: 3,
         borderTop: `3px solid ${ACCENT2}`,
-        backdropFilter: 'blur(20px)', boxShadow: '0 24px 80px rgba(0,0,0,0.5)' }}>
+        boxShadow: '0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.06)' }}>
         <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Box sx={{ width: 72, height: 72, borderRadius: '8px', mx: 'auto', mb: 2,
-            background: ACCENT2, border: '2px solid rgba(0,0,0,0.2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', animation: `${pulse} 3s ease-in-out infinite` }}>
-            <SensorsIcon sx={{ fontSize: 36, color: '#fff' }} />
+          <Box sx={{ width: 68, height: 68, borderRadius: '16px', mx: 'auto', mb: 2,
+            background: ACCENT2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <SensorsIcon sx={{ fontSize: 32, color: '#fff' }} />
           </Box>
-          <Typography variant="h5" fontWeight={900} sx={{
-            background: `linear-gradient(90deg,${ACCENT2},#a855f7)`,
-            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          <Typography variant="h5" fontWeight={700} color="#0f172a">
             Create Account
           </Typography>
-          <Typography variant="body2" color="rgba(255,255,255,0.4)" mt={0.5}>
+          <Typography variant="body2" color="rgba(15,23,42,0.5)" mt={0.5}>
             Join the TrustChain-WSN platform
           </Typography>
         </Box>
 
-        {error && <Alert severity="error" sx={{ mb: 3, background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)' }}>{error}</Alert>}
-        {success && <Alert severity="success" sx={{ mb: 3, background: 'rgba(52,211,153,0.1)', color: '#a7f3d0', border: '1px solid rgba(52,211,153,0.3)' }}>{success}</Alert>}
+        {error && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>{error}</Alert>}
+        {success && <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>{success}</Alert>}
 
         <form onSubmit={handleSubmit}>
           <Stack spacing={2.5}>
             <TextField label="Full Name" name="fullName" value={form.fullName} onChange={handleChange} required fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start"><PersonIcon sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
+              InputProps={{ startAdornment: <InputAdornment position="start"><PersonIcon sx={{ color: 'rgba(15,23,42,0.35)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
             <TextField label="Email Address" name="email" type="email" value={form.email} onChange={handleChange} required fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start"><EmailIcon sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
+              InputProps={{ startAdornment: <InputAdornment position="start"><EmailIcon sx={{ color: 'rgba(15,23,42,0.35)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
             <TextField select label="Role" name="role" value={form.role} onChange={handleChange} fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start"><BadgeIcon sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 18 }} /></InputAdornment> }}
-              sx={fieldSx}
-              SelectProps={{ MenuProps: { PaperProps: { sx: { background: '#11161f', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' } } } }}>
-              {ROLES.map(r => <MenuItem key={r} value={r} sx={{ color: '#fff', '&:hover': { background: `${ACCENT2}1a` } }}>{r}</MenuItem>)}
+              InputProps={{ startAdornment: <InputAdornment position="start"><BadgeIcon sx={{ color: 'rgba(15,23,42,0.35)', fontSize: 18 }} /></InputAdornment> }}
+              sx={fieldSx}>
+              {ROLES.map(r => <MenuItem key={r} value={r}>{r}</MenuItem>)}
             </TextField>
             <TextField label="Password" name="password" type={showPass ? 'text' : 'password'} value={form.password} onChange={handleChange} required fullWidth
               InputProps={{
-                startAdornment: <InputAdornment position="start"><LockIcon sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 18 }} /></InputAdornment>,
-                endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowPass(p => !p)} size="small" sx={{ color: 'rgba(255,255,255,0.3)' }}>{showPass ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}</IconButton></InputAdornment>,
+                startAdornment: <InputAdornment position="start"><LockIcon sx={{ color: 'rgba(15,23,42,0.35)', fontSize: 18 }} /></InputAdornment>,
+                endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowPass(p => !p)} size="small" sx={{ color: 'rgba(15,23,42,0.35)' }}>{showPass ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}</IconButton></InputAdornment>,
               }} sx={fieldSx} />
             <TextField label="Confirm Password" name="confirm" type="password" value={form.confirm} onChange={handleChange} required fullWidth
-              InputProps={{ startAdornment: <InputAdornment position="start"><LockIcon sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
+              InputProps={{ startAdornment: <InputAdornment position="start"><LockIcon sx={{ color: 'rgba(15,23,42,0.35)', fontSize: 18 }} /></InputAdornment> }} sx={fieldSx} />
 
             <Button type="submit" variant="contained" fullWidth size="large" disabled={loading}
-              sx={{ mt: 1, py: 1.5, fontWeight: 800, fontSize: '0.95rem', letterSpacing: 1.2, borderRadius: 1,
+              sx={{ mt: 1, py: 1.4, fontWeight: 700, fontSize: '0.95rem', borderRadius: 2,
                 background: ACCENT2, color: '#fff',
-                borderBottom: '3px solid rgba(0,0,0,0.35)',
-                '&:hover': { background: '#8f74ff' },
-                '&:disabled': { background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.3)', borderBottom: 'none' } }}>
+                '&:hover': { background: '#0f766e' },
+                '&:disabled': { background: 'rgba(15,23,42,0.08)', color: 'rgba(15,23,42,0.3)' } }}>
               {loading ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : 'Create Account'}
             </Button>
           </Stack>
         </form>
 
-        <Typography variant="body2" textAlign="center" color="rgba(255,255,255,0.4)" mt={3}>
+        <Typography variant="body2" textAlign="center" color="rgba(15,23,42,0.5)" mt={3}>
           Already have an account?{' '}
           <Typography component={Link} to="/login" variant="body2" sx={{ color: ACCENT2, textDecoration: 'none', fontWeight: 700, '&:hover': { textDecoration: 'underline' } }}>
             Sign in

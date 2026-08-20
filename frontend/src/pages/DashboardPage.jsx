@@ -185,7 +185,7 @@ export default function DashboardPage() {
                     {dist.map(d => (
                       <Stack key={d.name} direction="row" justifyContent="space-between" alignItems="center">
                         <Stack direction="row" spacing={0.8} alignItems="center">
-                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: d.color, boxShadow: `0 0 6px ${d.color}` }} />
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: d.color }} />
                           <Typography variant="body2" fontWeight={600}>{d.name}</Typography>
                         </Stack>
                         <Typography variant="body2" color="text.secondary" fontFamily="'JetBrains Mono', monospace">

@@ -193,10 +193,9 @@ export default function SimulationPage() {
               </Tooltip>
             </Stack>
             <Button fullWidth variant="contained" size="large" disabled={!effectiveTarget || capReached} onClick={inject} startIcon={<BoltIcon />}
-              sx={{ mt: 0.8, py: 1.4, fontWeight: 800, letterSpacing: 0.6, borderRadius: 3,
-                background: `linear-gradient(135deg, ${DANGER}, ${WARN})`, color: '#0a0a12',
-                boxShadow: `0 10px 30px ${alpha(DANGER, 0.45)}`,
-                '&:hover': { background: `linear-gradient(135deg, ${WARN}, ${DANGER})` } }}>
+              sx={{ mt: 0.8, py: 1.4, fontWeight: 700, letterSpacing: 0.3, borderRadius: 2,
+                background: DANGER, color: '#fff',
+                '&:hover': { background: '#b91c1c' } }}>
               {capReached ? 'Attack Cap Reached' : `Inject ${attack} Attack — Live`}
             </Button>
 
@@ -408,7 +407,7 @@ function Stat({ label, value, color }) {
 function Legend({ c, t }) {
   return (
     <Stack direction="row" spacing={0.6} alignItems="center">
-      <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: c, boxShadow: `0 0 8px ${c}` }} />
+      <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: c }} />
       <Typography variant="caption" color="text.secondary">{t}</Typography>
     </Stack>
   );
