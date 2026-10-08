@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # on the boundary and flap straight back into quarantine.
     READMIT_MARGIN:     float = 0.25
 
+    # Battery cost of the recovery pipeline, in % of a full battery. A
+    # quarantined node is not forwarding, but it is not free either.
+    QUARANTINE_IDLE_DRAIN: float = 0.05  # per round — radio in listen-only mode
+    REMEDIATION_ENERGY:    float = 1.5   # one-off — firmware re-flash + key re-issue
+    PROBATION_DRAIN:       float = 0.15  # per round — watchdog heartbeat probes
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:5174",
         "http://localhost:5173",

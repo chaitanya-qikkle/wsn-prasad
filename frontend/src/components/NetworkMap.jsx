@@ -238,7 +238,8 @@ export default function NetworkMap({
           const justRecovered = recovered.has(n.node_uid);
           const op = faded([n.node_uid]);
           const tip = [
-            n.node_uid, n.role, `trust ${n.trust_score?.toFixed(2)}`,
+            n.node_uid, n.role, n.ip, `trust ${n.trust_score?.toFixed(2)}`,
+            !isSink && `battery ${Math.round(n.energy ?? 0)}%`,
             n.zone_label,
             n.is_malicious ? `ATTACKING · ${n.attack}`
               : healing ? 'RECOVERING — rebuilding trust'
@@ -320,6 +321,19 @@ export default function NetworkMap({
                       fill="none" stroke={ACCENT2} strokeWidth={1.4 * s} strokeLinecap="round" strokeLinejoin="round" />
                   </g>
                 )}
+
+                {/* battery lifeline — a small bar under every battery-powered node */}
+                {!compact && !isSink && (() => {
+                  const pct = Math.max(0, Math.min(100, n.energy ?? 0));
+                  const w = 18 * s, h = 3.2 * s, x = cx - w / 2, y = cy + r + 4 * s;
+                  const bc = pct > 50 ? ACCENT2 : pct > 20 ? WARN : DANGER;
+                  return (
+                    <g>
+                      <rect x={x} y={y} width={w} height={h} rx={h / 2} fill={alpha(bc, 0.2)} />
+                      <rect x={x} y={y} width={(w * pct) / 100} height={h} rx={h / 2} fill={bc} />
+                    </g>
+                  );
+                })()}
 
                 {!compact && (
                   <text x={cx} y={cy - r - 5 * s} fontSize={10 * s} textAnchor="middle"

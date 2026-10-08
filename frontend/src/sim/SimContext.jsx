@@ -68,9 +68,10 @@ const EMPTY_SNAPSHOT = {
   attackTimeline: [],
   recoverySummary: { totalEpisodes: 0, recovered: 0, unresolved: 0, avgDetectSec: null,
     avgIsolateSec: null, avgRecoverSec: null, avgTotalSec: null, worstTotalSec: null,
-    bestTotalSec: null, openSec: 0, autoRecoveries: 0, manualRecoveries: 0 },
+    bestTotalSec: null, openSec: 0, autoRecoveries: 0, manualRecoveries: 0, avgRecoveryEnergy: null },
   phaseSnapshots: { before: null, during: null, after: null },
-  autoRecovery: { enabled: true, quarantineTicks: 3, rebuildRate: 0.08, threshold: 0.4, intervalMs: 2000 },
+  autoRecovery: { enabled: true, quarantineTicks: 3, rebuildRate: 0.08, threshold: 0.4, readmitTrust: 0.65,
+    intervalMs: 2000, quarantineDrain: 0.05, remediationEnergy: 1.5, probationDrain: 0.15 },
 };
 
 export function useSim() {

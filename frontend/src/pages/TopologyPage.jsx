@@ -10,7 +10,9 @@ import RouterIcon   from '@mui/icons-material/Router';
 import SensorsIcon  from '@mui/icons-material/Sensors';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import HealingIcon  from '@mui/icons-material/Healing';
+import BatteryStdIcon from '@mui/icons-material/BatteryStd';
 import { useSim } from '../sim/SimContext';
+import { batteryLevel, batteryLifeSec } from '../sim/constants';
 import {
   PageHeader, Panel, StatCard, LiveDot, LegendDot, PhaseChip, trustColor,
   zoneColor, ISOLATION_TREATMENT, ATTACK_COLORS, formatDuration,
@@ -37,7 +39,8 @@ export default function TopologyPage() {
   const { byUid, zones, wormholeLinks, recentlyRecovered } = useLiveMap(sim);
   const sel = selected ? byUid[selected] : null;
 
-  const readmitAt = (sim.autoRecovery?.threshold ?? 0.4) + 0.25;
+  const readmitAt = sim.autoRecovery?.readmitTrust ?? (sim.autoRecovery?.threshold ?? 0.4) + 0.25;
+  const intervalSec = (sim.interval || 2000) / 1000;
   const selEpisode = useMemo(
     () => (sim.attackTimeline || []).find(e => e.node_uid === selected), [sim.attackTimeline, selected]);
 
@@ -185,30 +188,46 @@ export default function TopologyPage() {
                   <PhaseChip phase={sel.phase || sel.status} />
                 </Stack>
                 <Typography variant="body2" color="text.secondary">{sel.label} · {sel.role}</Typography>
+                <Box>
+                  <InfoRow label="MAC address" value={sel.mac || '—'} mono />
+                  <InfoRow label="Static IP" value={sel.ip || '—'} mono />
+                </Box>
 
-                {sel.is_isolated && !sel.is_malicious && (
-                  <Box sx={{ p: 1.4, borderRadius: 2, border: `1px solid ${alpha(ACCENT, 0.35)}`,
-                    background: alpha(ACCENT, 0.07) }}>
-                    <Stack direction="row" alignItems="center" spacing={0.8} mb={0.8}>
-                      <HealingIcon sx={{ fontSize: 16, color: ACCENT }} />
-                      <Typography variant="caption" fontWeight={800} sx={{ color: ACCENT }}>
-                        Recovering automatically
+                {sel.is_isolated && sel.eta_rounds != null && (() => {
+                  const scrubbing = sel.is_malicious;
+                  const c = scrubbing ? WARN : ACCENT;
+                  return (
+                    <Box sx={{ p: 1.4, borderRadius: 2, border: `1px solid ${alpha(c, 0.35)}`,
+                      background: alpha(c, 0.07) }}>
+                      <Stack direction="row" alignItems="center" spacing={0.8} mb={0.8}>
+                        <HealingIcon sx={{ fontSize: 16, color: c }} />
+                        <Typography variant="caption" fontWeight={800} sx={{ color: c }}>
+                          {scrubbing ? 'In quarantine — being scrubbed' : 'Recovering automatically'}
+                        </Typography>
+                      </Stack>
+                      <LinearProgress variant="determinate"
+                        value={Math.min(100, ((sel.trust_score || 0) / readmitAt) * 100)}
+                        sx={{ height: 6, borderRadius: 999, bgcolor: alpha(c, 0.15),
+                          '& .MuiLinearProgress-bar': { bgcolor: c } }} />
+                      <Typography variant="caption" color="text.secondary" display="block" mt={0.7} mb={0.6}>
+                        {scrubbing
+                          ? `Quarantine round ${sel.quarantine_ticks} of ${sim.autoRecovery?.quarantineTicks ?? 3}, then trust rebuilds to ${readmitAt.toFixed(2)}.`
+                          : `Attack scrubbed. Trust ${sel.trust_score?.toFixed(2)} — rejoins routing at ${readmitAt.toFixed(2)}.`}
                       </Typography>
-                    </Stack>
-                    <LinearProgress variant="determinate"
-                      value={Math.min(100, ((sel.trust_score || 0) / readmitAt) * 100)}
-                      sx={{ height: 6, borderRadius: 999, bgcolor: alpha(ACCENT, 0.15),
-                        '& .MuiLinearProgress-bar': { bgcolor: ACCENT } }} />
-                    <Typography variant="caption" color="text.secondary" display="block" mt={0.7}>
-                      Attack scrubbed. Trust {sel.trust_score?.toFixed(2)} — rejoins routing at {readmitAt.toFixed(2)}.
-                    </Typography>
-                  </Box>
-                )}
+                      <InfoRow label="Time to readmission" small
+                        value={`≈ ${formatDuration(sel.eta_rounds * intervalSec)} (${sel.eta_rounds} rounds)`} color={c} />
+                      <InfoRow label="Battery spent so far" small value={`${(sel.recovery_energy ?? 0).toFixed(2)}%`} />
+                      <InfoRow label="Battery still needed" small value={`≈ ${sel.energy_needed?.toFixed(2)}%`} />
+                      <InfoRow label="Total recovery cost" small
+                        value={`≈ ${((sel.recovery_energy ?? 0) + (sel.energy_needed ?? 0)).toFixed(2)}%`} color={c} />
+                    </Box>
+                  );
+                })()}
 
                 <Divider sx={{ borderColor: grid }} />
                 {sel.zone_label && <InfoRow label="Area" value={sel.zone_label} color={zoneColor(sel.zone_label)} />}
                 <InfoRow label="Trust score" value={sel.trust_score.toFixed(3)} color={trustColor(sel.trust_score)} />
-                <InfoRow label="Energy" value={`${sel.energy.toFixed(0)}%`} />
+                <BatteryGauge node={sel} intervalMs={sim.interval} />
                 <InfoRow label="Packets forwarded" value={sel.packets_fwd} />
                 <InfoRow label="Packets dropped" value={sel.packets_drop} color={sel.packets_drop > 50 ? DANGER : undefined} />
                 <InfoRow label="Ground truth" value={sel.is_malicious ? (sel.attack || 'MALICIOUS') : 'Benign'}
@@ -226,6 +245,13 @@ export default function TopologyPage() {
                     <InfoRow label="Isolated after" value={formatDuration(selEpisode.isolate_sec)} color={DANGER} />
                     <InfoRow label="Back in service after" value={formatDuration(selEpisode.recover_sec)} color={ACCENT} />
                     <InfoRow label="End to end" value={formatDuration(selEpisode.total_sec)} color={ACCENT2} />
+                    {selEpisode.energy_at_recovery != null && (
+                      <>
+                        <InfoRow label="Battery at isolation → recovery"
+                          value={`${selEpisode.energy_at_isolation ?? '—'}% → ${selEpisode.energy_at_recovery}%`} />
+                        <InfoRow label="Recovery energy cost" value={`${selEpisode.recovery_energy}%`} color={WARN} />
+                      </>
+                    )}
                   </>
                 )}
 
@@ -284,11 +310,38 @@ function TreatmentSwatch({ attack, color }) {
 }
 const alphaHex = (c) => `${c}D9`;  // ~85% opacity, matching the map's node fill
 
-function InfoRow({ label, value, color }) {
+function InfoRow({ label, value, color, mono, small }) {
+  const v = small ? 'caption' : 'body2';
   return (
-    <Stack direction="row" justifyContent="space-between" alignItems="center">
-      <Typography variant="body2" color="text.secondary">{label}</Typography>
-      <Typography variant="body2" fontWeight={700} sx={{ color }}>{value}</Typography>
+    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+      <Typography variant={v} color="text.secondary">{label}</Typography>
+      <Typography variant={v} fontWeight={700} textAlign="right"
+        sx={{ color, fontFamily: mono ? "'JetBrains Mono', monospace" : undefined }}>{value}</Typography>
     </Stack>
   );
 }
+
+// Battery level plus how long it lasts at the node's current drain rate.
+function BatteryGauge({ node, intervalMs }) {
+  const pct = Math.max(0, node.energy ?? 0);
+  const c = BATTERY_COLORS[batteryLevel(pct)];
+  const life = batteryLifeSec(node, intervalMs);
+  return (
+    <Box>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.5}>
+        <Stack direction="row" spacing={0.6} alignItems="center">
+          <BatteryStdIcon sx={{ fontSize: 16, color: c }} />
+          <Typography variant="body2" color="text.secondary">Battery</Typography>
+        </Stack>
+        <Typography variant="body2" fontWeight={800} sx={{ color: c }}>{pct.toFixed(1)}%</Typography>
+      </Stack>
+      <LinearProgress variant="determinate" value={Math.min(100, pct)}
+        sx={{ height: 7, borderRadius: 999, bgcolor: alpha(c, 0.15), '& .MuiLinearProgress-bar': { bgcolor: c } }} />
+      <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
+        {pct <= 0 ? 'Battery depleted'
+          : `Lifetime ≈ ${formatDuration(life)} left at ${node.drain_rate?.toFixed(2)}% per round`}
+      </Typography>
+    </Box>
+  );
+}
+const BATTERY_COLORS = { good: ACCENT2, low: WARN, critical: DANGER };

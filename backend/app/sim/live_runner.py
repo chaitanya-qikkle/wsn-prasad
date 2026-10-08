@@ -399,7 +399,11 @@ class LiveSimRunner:
                 'quarantineTicks': self.s.QUARANTINE_TICKS,
                 'rebuildRate': self.s.TRUST_REBUILD_RATE,
                 'threshold': self.s.TRUST_THRESHOLD,
+                'readmitTrust': self.sim.readmit_trust(),
                 'intervalMs': self.interval_ms,
+                'quarantineDrain': self.s.QUARANTINE_IDLE_DRAIN,
+                'remediationEnergy': self.s.REMEDIATION_ENERGY,
+                'probationDrain': self.s.PROBATION_DRAIN,
             },
         }
 

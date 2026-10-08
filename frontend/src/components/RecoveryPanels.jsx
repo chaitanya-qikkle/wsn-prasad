@@ -9,6 +9,7 @@ import CompareArrowsIcon  from '@mui/icons-material/CompareArrows';
 import ReportProblemIcon  from '@mui/icons-material/ReportProblem';
 import { Panel, TimeStat, PhaseChip, formatDuration, ATTACK_COLORS } from '../utils/ui';
 import { ACCENT, ACCENT2, DANGER, WARN, NEON } from '../context/ThemeContext';
+import { ALGORITHMS } from '../sim/constants';
 
 /*  Everything about automatic recovery and how long it takes.
  *
@@ -62,13 +63,25 @@ export function AutoRecoveryBanner({ sim }) {
             {on ? (
               <>Quarantine → scrub after {formatDuration(quarantineSec)} → rebuild trust to{' '}
                 {((cfg.threshold ?? 0.4) + 0.25).toFixed(2)} → readmitted to routing.{' '}
-                <b>{sum.autoRecoveries || 0}</b> node(s) have healed themselves so far, with zero operator action.</>
+                <b>{sum.autoRecoveries || 0}</b> node(s) have healed themselves so far, with zero operator action.
+                {' '}Battery cost: {cfg.quarantineDrain}%/round in quarantine, {cfg.remediationEnergy}% to scrub,
+                {' '}{cfg.probationDrain}%/round on probation.</>
             ) : (
               <>The existing system has no trust engine: a detected node keeps attacking until a human
                 intervenes. Nothing below will self-heal while this is on.</>
             )}
           </Typography>
         </Box>
+      </Stack>
+
+      <Stack direction="row" spacing={1} mt={1.6} flexWrap="wrap" useFlexGap>
+        {Object.entries(ALGORITHMS).map(([role, a]) => (
+          <Tooltip key={role} title={a.ref} arrow>
+            <Chip size="small" variant="outlined"
+              label={<><b style={{ textTransform: 'capitalize' }}>{role}:</b> {a.name}</>}
+              sx={{ height: 22, fontSize: 10.5, borderColor: alpha(c, 0.3) }} />
+          </Tooltip>
+        ))}
       </Stack>
 
       {on && (
@@ -103,6 +116,8 @@ export function RecoveryTimings({ sim }) {
         <TimeStat label="Recover" value={formatDuration(sum.avgRecoverSec)} color={ACCENT} hint="quarantine → back in service" />
         <TimeStat label="End to end" value={formatDuration(sum.avgTotalSec)} color={ACCENT2} hint="average, whole incident" />
         <TimeStat label="Worst case" value={formatDuration(sum.worstTotalSec)} color={NEON} hint="slowest recovery seen" />
+        <TimeStat label="Energy" value={sum.avgRecoveryEnergy != null ? `${sum.avgRecoveryEnergy}%` : '—'}
+          color={WARN} hint="avg battery per recovery" />
       </Stack>
     </Panel>
   );
@@ -320,7 +335,8 @@ export function RecoveryLog({ sim, limit = 6 }) {
   const theme = useTheme();
   const events = [...(sim.recoveryEvents || [])].reverse().slice(0, limit);
   const healing = (sim.nodes || []).filter(n => n.is_isolated && !n.is_malicious);
-  const readmitAt = (sim.autoRecovery?.threshold ?? 0.4) + 0.25;
+  const readmitAt = sim.autoRecovery?.readmitTrust ?? (sim.autoRecovery?.threshold ?? 0.4) + 0.25;
+  const intervalSec = (sim.interval || 2000) / 1000;
 
   return (
     <Panel accent={ACCENT2} title="Recovery Confirmations"
@@ -348,6 +364,12 @@ export function RecoveryLog({ sim, limit = 6 }) {
                 <LinearProgress variant="determinate" value={pct}
                   sx={{ height: 6, borderRadius: 999, bgcolor: alpha(ACCENT, 0.14),
                     '& .MuiLinearProgress-bar': { bgcolor: ACCENT } }} />
+                {n.eta_rounds != null && (
+                  <Typography variant="caption" color="text.secondary" display="block" mt={0.4}>
+                    back in ≈ {formatDuration(n.eta_rounds * intervalSec)} · battery {n.energy?.toFixed(1)}%
+                    {' '}· {(n.recovery_energy ?? 0).toFixed(2)}% spent, ≈ {n.energy_needed?.toFixed(2)}% more needed
+                  </Typography>
+                )}
               </Box>
             );
           })}
@@ -377,6 +399,7 @@ export function RecoveryLog({ sim, limit = 6 }) {
               <Typography variant="caption" color="text.secondary">
                 {e.attack_type || 'anomaly'} · out of service {formatDuration(e.duration_sec)}
                 {e.total_sec != null && ` · ${formatDuration(e.total_sec)} end to end`}
+                {e.energy_at_recovery != null && ` · battery ${e.energy_at_recovery}% (cost ${e.recovery_energy}%)`}
               </Typography>
             </Box>
             <Chip size="small" label={e.method === 'auto' ? 'automatic' : 'manual'}
