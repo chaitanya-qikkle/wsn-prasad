@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api", tags=["Routing & Metrics"])
 def get_routes():
     sim = get_sim()
     sources = [n.uid for n in sim.nodes.values()
-               if n.role != "Sink" and not n.isolated][:14]
+               if n.role != "Sink" and not n.isolated and n.energy > 0][:14]
     return [r for r in (sim.discover_route(s) for s in sources) if r]
 
 

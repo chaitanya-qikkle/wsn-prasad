@@ -23,6 +23,7 @@ from ..core.config import get_settings
 
 ATTACKS = ["Blackhole", "Sybil", "Wormhole", "Grayhole"]
 SEVERITY = {"Blackhole": "Critical", "Sybil": "High", "Wormhole": "Critical", "Grayhole": "Medium"}
+DROP_RATIO = {"Blackhole": 0.95, "Grayhole": 0.5, "Wormhole": 0.3, "Sybil": 0.2}
 
 # Node lifecycle phases, in order. Drives the UI's recovery timeline.
 PHASE_ACTIVE      = "Active"
@@ -31,6 +32,7 @@ PHASE_DETECTED    = "Detected"
 PHASE_ISOLATED    = "Isolated"
 PHASE_REMEDIATING = "Remediating"
 PHASE_RECOVERED   = "Recovered"
+PHASE_DEAD        = "Dead"       # battery empty — outside the attack lifecycle
 
 
 @dataclass
@@ -52,7 +54,7 @@ class Node:
     partner: str | None = None  # colluding node uid — Wormhole is a two-node tunnel attack
     mac: str = ""
     ip: str = ""                # static, assigned at deployment
-    drain_rate: float = 0.35    # moving average of % battery spent per round — drives the lifetime estimate
+    drain_rate: float = 0.07    # moving average of % battery spent per round — drives the lifetime estimate
     # ── recovery lifecycle ────────────────────────────────────────────────
     phase: str = PHASE_ACTIVE
     attack_started_at: float | None = None
@@ -231,13 +233,17 @@ class WSNSimulator:
         for n in self.nodes.values():
             if n.role == "Sink":
                 continue
+            if n.energy <= 0:
+                if n.phase != PHASE_DEAD:
+                    self._mark_dead(n)
+                continue
             if n.isolated:
                 self._probation_tick(n)
                 continue
             # simulate one forwarding window
             traffic = self.rng.randint(20, 60)
             if n.malicious:
-                drop_ratio = {"Blackhole": 0.95, "Grayhole": 0.5, "Wormhole": 0.3, "Sybil": 0.2}[n.attack]
+                drop_ratio = DROP_RATIO[n.attack]
                 dropped = int(traffic * drop_ratio)
                 delay_anom = self.rng.uniform(2.0, 6.0) if n.attack in ("Wormhole", "Grayhole") else self.rng.uniform(0.5, 2.0)
                 identity = n.attack == "Sybil"
@@ -251,7 +257,7 @@ class WSNSimulator:
             n.drop += dropped
             round_fwd += forwarded
             round_drop += dropped
-            self._drain(n, self.rng.uniform(0.1, 0.6))
+            self._drain(n, self.rng.uniform(self.s.FORWARD_DRAIN_MIN, self.s.FORWARD_DRAIN_MAX))
 
             trust_before = n.trust
             penalty = (dropped / traffic) * self.s.DROP_PENALTY * 10
@@ -287,6 +293,19 @@ class WSNSimulator:
         n.energy = round(n.energy - spent, 3)
         n.drain_rate = round(0.8 * n.drain_rate + 0.2 * amount, 4)
         return spent
+
+    def _mark_dead(self, n: Node):
+        """A flat battery ends the node for good: it stops forwarding, drops
+        out of routing and any attack on it ends with it."""
+        n.phase = PHASE_DEAD
+        n.isolated = False
+        n.malicious = False
+        n.attack = None
+        n.partner = None
+        ep = self._open.pop(n.uid, None)
+        if ep:
+            ep["status"] = PHASE_DEAD
+            ep["total_sec"] = round(time.time() - ep["started_at"], 1)
 
     # ── automatic recovery ──────────────────────────────────────────────────
     def readmit_trust(self) -> float:
@@ -436,38 +455,66 @@ class WSNSimulator:
 
     # ── routing (trust-aware AODV) ──────────────────────────────────────────
     def discover_route(self, src: str, dst: str = "N-001") -> dict | None:
-        """Greedy trust+distance route to the sink avoiding isolated nodes."""
-        if src not in self.nodes:
+        """Trust-aware AODV route from src to the sink.
+
+        Only nodes that pass the trust check take part. The same discovery
+        over every live node shows what plain AODV would have used, so a route
+        is marked reconfigured only when trust really changed its path.
+        """
+        if src not in self.nodes or dst not in self.nodes:
             return None
-        avoided = [u for u, n in self.nodes.items() if n.isolated or n.trust < self.s.TRUST_THRESHOLD]
-        candidates = [n for n in self.nodes.values() if not n.isolated and n.trust >= self.s.TRUST_THRESHOLD]
-        cur = self.nodes[src]
-        hops = [src]
-        visited = {src}
-        latency = 0.0
-        for _ in range(6):
-            if cur.uid == dst:
-                break
-            nxt = min(
-                (c for c in candidates if c.uid not in visited),
-                key=lambda c: self._dist(c, self.nodes[dst]) / max(c.trust, 0.01),
-                default=None,
-            )
-            if not nxt:
-                break
-            hops.append(nxt.uid)
-            visited.add(nxt.uid)
-            latency += self._dist(cur, nxt) * 0.8 + self.rng.uniform(2, 8)
-            cur = nxt
-        if hops[-1] != dst:
-            hops.append(dst)
+        alive = [n for n in self.nodes.values() if n.energy > 0]
+        usable = [n for n in alive if not n.isolated]
+        if not self.baseline_mode:  # existing system has no trust engine to consult
+            usable = [n for n in usable if n.trust >= self.s.TRUST_THRESHOLD]
+        path = self._rreq_flood(src, dst, usable, weigh_trust=not self.baseline_mode)
+        usable_ids = {n.uid for n in usable}
+        plain = self._rreq_flood(src, dst, alive, weigh_trust=False) or []
+        avoided = [u for u in plain if u not in usable_ids and u != src]
+
+        hops = path or [src]
+        latency = sum(self._dist(self.nodes[a], self.nodes[b]) * 0.8 + self.rng.uniform(2, 8)
+                      for a, b in zip(hops, hops[1:]))
         trusts = [self.nodes[h].trust for h in hops]
+        reason = f"Avoided node {avoided[0]}" if avoided else None
+        if not path:
+            reason = "No trusted path to the sink"
         return {
             "id": f"{src}-{dst}", "src_uid": src, "dst_uid": dst, "hops": hops, "hop_count": len(hops) - 1,
             "path_trust": round(min(trusts), 3), "latency": round(latency, 1),
-            "is_active": True, "reconfigured": bool(avoided),
-            "reason": f"Avoided isolated node {avoided[0]}" if avoided else None,
+            "is_active": bool(path), "reconfigured": bool(avoided) or not path,
+            "reason": reason,
         }
+
+    def _rreq_flood(self, src: str, dst: str, allowed: list[Node], weigh_trust: bool = True) -> list[str] | None:
+        """AODV route discovery. The RREQ spreads one radio hop at a time and
+        each node rebroadcasts only its first copy, so the first ring to reach
+        dst gives the fewest hops; the RREP then walks the reverse path back.
+        Copies arriving in the same ring are compared on distance / trust, or
+        on distance alone for plain AODV, which knows nothing about trust.
+        """
+        cost = {src: 0.0}
+        reverse_path = {}
+        ring = [src]
+        while ring and dst not in cost:
+            heard = {}
+            for uid in ring:
+                sender = self.nodes[uid]
+                for n in allowed:
+                    if n.uid in cost or self._dist(sender, n) > self.s.RADIO_RANGE:
+                        continue
+                    c = cost[uid] + self._dist(sender, n) / (max(n.trust, 0.01) if weigh_trust else 1.0)
+                    if n.uid not in heard or c < heard[n.uid]:
+                        heard[n.uid] = c
+                        reverse_path[n.uid] = uid
+            cost.update(heard)
+            ring = list(heard)
+        if dst not in cost:
+            return None
+        hops = [dst]
+        while hops[-1] != src:
+            hops.append(reverse_path[hops[-1]])
+        return hops[::-1]
 
     def _dist(self, a: Node, b: Node) -> float:
         return math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1])
@@ -485,7 +532,7 @@ class WSNSimulator:
         if self._metrics_cache is not None and self._metrics_round == self.round_no:
             return self._metrics_cache
 
-        active = [n for n in self.nodes.values() if not n.isolated]
+        active = [n for n in self.nodes.values() if not n.isolated and n.energy > 0]
         # PDR reacts to the last few rounds only, not the whole run's history —
         # otherwise a long-running demo makes new attacks/recoveries invisible
         # because they get diluted into an ever-growing all-time average.
@@ -494,7 +541,7 @@ class WSNSimulator:
         total = window_fwd + window_drop
         # A network that has not forwarded anything yet has not dropped
         # anything either — report a clean 100%, not 0%, before the first round.
-        pdr = 100.0 if total == 0 else 100.0 * window_fwd / total
+        pdr = 100.0 * window_fwd / total if total else (0.0 if self.round_history else 100.0)
         mal_active = sum(1 for n in self.nodes.values() if n.malicious and not n.isolated)
         m = {
             "pdr": round(pdr, 1),
@@ -515,7 +562,7 @@ class WSNSimulator:
             "node_uid": n.uid, "label": n.label or f"Field Node {n.uid[-2:]}", "role": n.role,
             "pos_x": n.pos[0], "pos_y": n.pos[1], "energy": n.energy,
             "trust_score": n.trust, "is_malicious": n.malicious, "is_isolated": n.isolated,
-            "status": "Isolated" if n.isolated else "Active",
+            "status": "Dead" if n.phase == PHASE_DEAD else "Isolated" if n.isolated else "Active",
             "packets_fwd": n.fwd, "packets_drop": n.drop, "avg_delay": round(n.delay, 1),
             "zone": n.zone, "zone_label": n.zone_label,
             "attack": n.attack, "partner": n.partner if n.attack == "Wormhole" else None,
@@ -571,7 +618,7 @@ class WSNSimulator:
     # ── user actions (mirrors frontend engine.js semantics) ──────────────────
     def inject_attack(self, uid: str, attack_type: str = "Blackhole") -> Node | None:
         n = self.nodes.get(uid)
-        if not n or n.role == "Sink":
+        if not n or n.role == "Sink" or n.energy <= 0:
             return None
         if not n.malicious and self.malicious_cap_reached():
             return None  # containment cap — never let an attack spread to the whole network
@@ -591,7 +638,7 @@ class WSNSimulator:
 
     def isolate_node(self, uid: str) -> Node | None:
         n = self.nodes.get(uid)
-        if not n:
+        if not n or n.energy <= 0:
             return None
         self._mark_isolated(n)
         n.trust = 0.1
@@ -602,7 +649,7 @@ class WSNSimulator:
 
     def restore_node(self, uid: str) -> Node | None:
         n = self.nodes.get(uid)
-        if not n:
+        if not n or n.energy <= 0:
             return None
         if n.attack:
             n.last_attack = n.attack

@@ -307,6 +307,7 @@ export const PHASE_COLORS = {
   Isolated:    '#f43f5e',
   Remediating: '#0891b2',
   Recovered:   '#059669',
+  Dead:        '#475569',
 };
 export const PHASE_ORDER = ['Active', 'Compromised', 'Detected', 'Isolated', 'Remediating', 'Recovered'];
 

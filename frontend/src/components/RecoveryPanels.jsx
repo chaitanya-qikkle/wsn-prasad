@@ -169,7 +169,7 @@ export function AttackTimeline({ sim, limit = 8, onSelect }) {
 function TimelineRow({ ep, maxSec, now, onSelect }) {
   const theme = useTheme();
   const attackColor = ATTACK_COLORS[ep.attack_type] || NEON;
-  const resolved = ep.status === 'Recovered';
+  const resolved = ep.status === 'Recovered' || ep.status === 'Dead';
   const elapsed = resolved ? ep.total_sec : Math.max(0, now / 1000 - ep.started_at);
 
   // stage boundaries in seconds from the start of the attack
