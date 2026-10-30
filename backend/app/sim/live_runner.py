@@ -95,7 +95,7 @@ class LiveSimRunner:
 
         if self.auto_attack and not self.sim.malicious_cap_reached() and self.sim.rng.random() < 0.28:
             clean = [n for n in self.sim.nodes.values()
-                     if n.role != 'Sink' and not n.malicious and not n.isolated]
+                     if n.role != 'Sink' and not n.malicious and not n.isolated and n.energy > 0]
             if clean:
                 pick = self.sim.rng.choice(clean)
                 self.sim.inject_attack(pick.uid, self.sim.rng.choice(ATTACKS))
@@ -194,8 +194,10 @@ class LiveSimRunner:
         self._prev_malicious = mal
 
     def _route_sources(self):
-        return [n.uid for n in self.sim.nodes.values()
-                if n.role in ('Sensor', 'Relay', 'Gateway', 'Cluster Head') and not n.isolated][:8]
+        live = [n for n in self.sim.nodes.values()
+                if n.role in ('Sensor', 'Relay', 'Gateway', 'Cluster Head') and not n.isolated and n.energy > 0]
+        # sensors originate the data, so their routes are the ones to show
+        return [n.uid for n in sorted(live, key=lambda n: n.role != 'Sensor')][:8]
 
     def _rebuild_routes(self):
         self.routes = [r for r in (self.sim.discover_route(s) for s in self._route_sources()) if r]

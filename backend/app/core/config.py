@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     BLOCK_DIFFICULTY:  int = 2           # leading-zero difficulty for PoW demo
     MAX_MALICIOUS_PCT: float = 0.25      # attack containment cap — never let more than this
                                           # share of the network be compromised at once
+    RADIO_RANGE:       float = 40.0      # two nodes can talk only within this distance (field is 100 x 100)
+
+    # Battery spent per round on forwarding traffic, in % of a full battery.
+    FORWARD_DRAIN_MIN: float = 0.02
+    FORWARD_DRAIN_MAX: float = 0.12
 
     # Automatic recovery. An isolated node is scrubbed after QUARANTINE_TICKS
     # rounds, then has to earn its way back above TRUST_THRESHOLD at

@@ -96,7 +96,7 @@ def node_row(n) -> dict:
         "trust_score": round(n.trust, 3),
         "is_malicious": n.malicious,
         "is_isolated": n.isolated,
-        "status": "Isolated" if n.isolated else "Active",
+        "status": "Dead" if n.energy <= 0 else "Isolated" if n.isolated else "Active",
         "packets_fwd": n.fwd,
         "packets_drop": n.drop,
         "avg_delay": round(n.delay, 1),
@@ -175,7 +175,7 @@ def push_trust_history(sb: Client, sim: WSNSimulator) -> None:
 def push_routes(sb: Client, sim: WSNSimulator) -> None:
     # rebuild active AODV routes from a few source sensors to the sink
     sources = [u for u, n in sim.nodes.items()
-               if n.role in ("Sensor", "Relay", "Gateway") and not n.isolated][:6]
+               if n.role in ("Sensor", "Relay", "Gateway") and not n.isolated and n.energy > 0][:6]
     # mark old routes inactive, insert fresh ones
     try:
         sb.table("routing_paths").delete().neq(

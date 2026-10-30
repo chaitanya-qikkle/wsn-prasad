@@ -3,7 +3,7 @@ import { Box, alpha, useTheme, Tooltip, Stack, IconButton } from '@mui/material'
 import AddIcon        from '@mui/icons-material/Add';
 import RemoveIcon     from '@mui/icons-material/Remove';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
-import { trustColor, ISOLATION_TREATMENT, pulse, ATTACK_COLORS } from '../utils/ui';
+import { trustColor, ISOLATION_TREATMENT, pulse, ATTACK_COLORS, STATUS_COLORS } from '../utils/ui';
 import { ACCENT, ACCENT2, WARN, DANGER } from '../context/ThemeContext';
 
 /*  Shared field-map renderer — used by the Topology page (full detail, with
@@ -230,7 +230,8 @@ export default function NetworkMap({
           // hostile — it gets its own colour so "recovering" never looks the
           // same as "under attack".
           const healing = n.is_isolated && !n.is_malicious;
-          const c = n.is_malicious ? DANGER : n.is_isolated ? (healing ? ACCENT : DANGER) : trustColor(n.trust_score);
+          const dead = n.status === 'Dead';
+          const c = dead ? STATUS_COLORS.Dead : n.is_malicious ? DANGER : n.is_isolated ? (healing ? ACCENT : DANGER) : trustColor(n.trust_score);
           const r = (isSink ? 16 : n.role === 'Cluster Head' ? 12 : 9) * s;
           const hot = n.is_malicious;
           const cx = X(n.pos_x), cy = Y(n.pos_y);
@@ -241,7 +242,8 @@ export default function NetworkMap({
             n.node_uid, n.role, n.ip, `trust ${n.trust_score?.toFixed(2)}`,
             !isSink && `battery ${Math.round(n.energy ?? 0)}%`,
             n.zone_label,
-            n.is_malicious ? `ATTACKING · ${n.attack}`
+            dead ? 'DEAD — battery empty'
+              : n.is_malicious ? `ATTACKING · ${n.attack}`
               : healing ? 'RECOVERING — rebuilding trust'
               : justRecovered ? 'RECOVERED' : null,
           ].filter(Boolean).join(' · ');
